@@ -559,6 +559,10 @@ export class Game {
     this._netEnemyById = null;
     this._netLastEnemyHp = null;
     this._netLastEnemyDmgAt = null;
+
+    // Stable ids for short-lived replicated objects (fix joiner interpolation swaps).
+    this._netObjId = 1;
+    this._netListById = null;
     /** Seat indices controlled by keyboards on THIS machine (solo 0..n-1, host [0], client [mySeat]). */
     this._jamLocalSeats = [0];
     /** @type {{ key: string; t: number }} */
@@ -650,6 +654,8 @@ export class Game {
     this._netEnemyById = null;
     this._netLastEnemyHp = null;
     this._netLastEnemyDmgAt = null;
+    this._netObjId = 1;
+    this._netListById = null;
     this.camX = this.player.x - viewWorldW() / 2;
     this.camY = this.player.y - viewWorldH() / 2;
     this.camTargetX = this.camX;
@@ -1026,6 +1032,7 @@ export class Game {
     const sx = px + nx * fwd + (-ny) * normalOff * perpSign;
     const sy = py + ny * fwd + nx * normalOff * perpSign + upOff;
     this.slashes.push({
+      id: this.netAllocObjId(),
       x: sx,
       y: sy,
       ang: baseAng,
@@ -1518,6 +1525,7 @@ export class Game {
     ty = clamp(ty, 0, CONFIG.WORLD_H);
 
     this.toxicGrenades.push({
+      id: this.netAllocObjId(),
       sx: spawnX,
       sy: spawnY,
       tx,
@@ -1555,6 +1563,7 @@ export class Game {
     for (const e of killed) this.killEnemy(e);
 
     this.toxicExplosions.push({
+      id: this.netAllocObjId(),
       x,
       y,
       t: 0,
@@ -1567,6 +1576,7 @@ export class Game {
     // Poison cloud (lingering).
     const dur = Math.max(0.5, CONFIG.ARCHER_TOXIC_CLOUD_DURATION ?? 3);
     this.toxicClouds.push({
+      id: this.netAllocObjId(),
       x,
       y,
       life: dur,
@@ -2092,7 +2102,15 @@ export class Game {
 
     // Visual
     const vDur = Math.max(0.1, CONFIG.GROUND_SLAM_VFX_DURATION ?? 0.3);
-    this.groundSlams.push({ x: px, y: py, r, life: vDur, maxLife: vDur, second: isSecond === true });
+    this.groundSlams.push({
+      id: this.netAllocObjId(),
+      x: px,
+      y: py,
+      r,
+      life: vDur,
+      maxLife: vDur,
+      second: isSecond === true,
+    });
 
     if (hitAny) {
       this.shake = Math.min(
@@ -2880,6 +2898,7 @@ export class Game {
       const tid =
         tgt && Number.isFinite(tgt.id) ? tgt.id : null;
       this.soulRipProjectiles.push({
+        id: this.netAllocObjId(),
         x: spawnX,
         y: spawnY,
         vx: forwardX * speed,
@@ -3122,6 +3141,7 @@ export class Game {
       const vy = Math.sin(ang) * spd;
       const poisonOn = isArcher && (st.poisonArrows ?? 0) > 0;
       this.projectiles.push({
+        id: this.netAllocObjId(),
         x: player.x + Math.cos(ang) * 18,
         y: player.y + Math.sin(ang) * 18,
         vx,
@@ -3633,6 +3653,7 @@ export class Game {
             ? (CONFIG.XP_ORB_MED_VALUE ?? 3)
             : (CONFIG.XP_ORB_SMALL_VALUE ?? 1);
       this.xpOrbs.push({
+        id: this.netAllocObjId(),
         x: ex,
         y: ey,
         value,
@@ -3646,6 +3667,7 @@ export class Game {
     const gOk = (this.pickupDropGlobalCd ?? 0) <= 0;
     if (gOk && (this.pickupDropHeartCd ?? 0) <= 0 && Math.random() < (CONFIG.PICKUP_DROP_HEART_P ?? 0.06)) {
       this.pickups.push({
+        id: this.netAllocObjId(),
         kind: "heart",
         x: ex,
         y: ey,
@@ -3658,6 +3680,7 @@ export class Game {
     }
     if (gOk && (this.pickupDropMagnetCd ?? 0) <= 0 && Math.random() < (CONFIG.PICKUP_DROP_MAGNET_P ?? 0.02)) {
       this.pickups.push({
+        id: this.netAllocObjId(),
         kind: "magnet",
         x: ex,
         y: ey,
@@ -3670,6 +3693,7 @@ export class Game {
     }
     if (Math.random() < (CONFIG.PICKUP_DROP_BOMB_P ?? 0.02)) {
       this.pickups.push({
+        id: this.netAllocObjId(),
         kind: "bomb",
         x: ex,
         y: ey,
@@ -4241,21 +4265,27 @@ export class Game {
       if (e._netSeen === false) arr.splice(i, 1);
     }
 
-    // Index-based arrays (projectiles/pickups/xp) — lightweight.
-    this._netIdxTargets = this._netIdxTargets ?? {};
-    this._netIdxTargets.projectiles = snap.projectiles ?? [];
-    this._netIdxTargets.bossArcaneProjs = snap.bossArcaneProjs ?? [];
-    this._netIdxTargets.toxicGrenades = snap.toxicGrenades ?? [];
-    this._netIdxTargets.toxicExplosions = snap.toxicExplosions ?? [];
-    this._netIdxTargets.daggers = snap.daggers ?? [];
-    this._netIdxTargets.throwingAxes = snap.throwingAxes ?? [];
-    this._netIdxTargets.boomerangs = snap.boomerangs ?? [];
-    this._netIdxTargets.pickups = snap.pickups ?? [];
-    this._netIdxTargets.xpOrbs = snap.xpOrbs ?? [];
-    this._netIdxTargets.groundSlams = snap.groundSlams ?? [];
-    this._netIdxTargets.slashes = snap.slashes ?? [];
-    this._netIdxTargets.soulRipProjectiles = snap.soulRipProjectiles ?? [];
-    this._netIdxTargets.lightningStrikes = snap.lightningStrikes ?? [];
+    // Id-based lists (avoids index swapping artifacts for joiners).
+    this._netListById ??= {};
+    const store = this._netListById;
+    store.projectiles = snap.projectiles ?? [];
+    store.bossArcaneProjs = snap.bossArcaneProjs ?? [];
+    store.toxicGrenades = snap.toxicGrenades ?? [];
+    store.toxicExplosions = snap.toxicExplosions ?? [];
+    store.daggers = snap.daggers ?? [];
+    store.throwingAxes = snap.throwingAxes ?? [];
+    store.boomerangs = snap.boomerangs ?? [];
+    store.pickups = snap.pickups ?? [];
+    store.xpOrbs = snap.xpOrbs ?? [];
+    store.groundSlams = snap.groundSlams ?? [];
+    store.slashes = snap.slashes ?? [];
+    store.soulRipProjectiles = snap.soulRipProjectiles ?? [];
+    store.lightningStrikes = snap.lightningStrikes ?? [];
+  }
+
+  netAllocObjId() {
+    this._netObjId = (this._netObjId ?? 1) + 1;
+    return this._netObjId - 1;
   }
 
   netInterpolateWorld(dt) {
@@ -4274,41 +4304,67 @@ export class Game {
       }
     }
 
-    const lerpIdx = (key, list, copyFn) => {
-      const tgt = this._netIdxTargets?.[key];
+    const lerpById = (key, list) => {
+      const tgt = this._netListById?.[key];
       if (!Array.isArray(tgt)) return;
       if (!Array.isArray(list)) return;
-      // Resize quickly to match, but keep objects stable when possible.
-      while (list.length < tgt.length) list.push(copyFn(tgt[list.length]));
-      while (list.length > tgt.length) list.pop();
-      for (let i = 0; i < tgt.length; i++) {
-        const t = tgt[i];
-        const o = list[i];
-        if (!t || !o) continue;
-        if (Number.isFinite(t.x) && Number.isFinite(t.y)) {
+
+      // Build id->object map for current list.
+      const map = new Map();
+      for (const o of list) {
+        if (o && typeof o.id === "number") map.set(o.id, o);
+        if (o) o._netSeen = false;
+      }
+
+      for (const t of tgt) {
+        if (!t || typeof t.id !== "number") continue;
+        let o = map.get(t.id);
+        if (!o) {
+          o = { ...t };
+          list.push(o);
+          map.set(t.id, o);
+        }
+        o._netSeen = true;
+        // Position lerp
+        if (Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(o.x) && Number.isFinite(o.y)) {
           o.x += (t.x - o.x) * a;
           o.y += (t.y - o.y) * a;
+        } else {
+          o.x = t.x;
+          o.y = t.y;
         }
-        // Copy a few render-relevant fields without realloc.
-        for (const f of ["vx","vy","r","rot","kind","tier","value","life","maxLife","floatPhase","sprite","tint","phase","frame","second","ang","baseAng","lines","len","elapsed","seed","boltDur","impactDur"]) {
+        // Copy render/state fields cheaply
+        for (const f of [
+          "vx","vy","r","rot","kind","tier","value","life","maxLife","floatPhase","sprite","tint",
+          "phase","frame","second","ang","baseAng","lines","len","elapsed",
+          "sx","sy","tx","ty","t","dur","arcH","rotSp","frameT","didImpact","puffCd",
+          "targetId","ownerIndex","range","maxLifeStrike","seed","boltDur","impactDur"
+        ]) {
           if (t[f] !== undefined) o[f] = t[f];
         }
       }
+
+      // Remove missing ids.
+      for (let i = list.length - 1; i >= 0; i--) {
+        const o = list[i];
+        if (!o) continue;
+        if (o._netSeen === false) list.splice(i, 1);
+      }
     };
 
-    lerpIdx("projectiles", this.projectiles, (t) => ({ ...t }));
-    lerpIdx("bossArcaneProjs", this.bossArcaneProjs, (t) => ({ ...t }));
-    lerpIdx("toxicGrenades", this.toxicGrenades, (t) => ({ ...t }));
-    lerpIdx("toxicExplosions", this.toxicExplosions, (t) => ({ ...t }));
-    lerpIdx("daggers", this.daggers, (t) => ({ ...t }));
-    lerpIdx("throwingAxes", this.throwingAxes, (t) => ({ ...t }));
-    lerpIdx("boomerangs", this.boomerangs, (t) => ({ ...t }));
-    lerpIdx("pickups", this.pickups, (t) => ({ ...t }));
-    lerpIdx("xpOrbs", this.xpOrbs, (t) => ({ ...t }));
-    lerpIdx("groundSlams", this.groundSlams, (t) => ({ ...t }));
-    lerpIdx("slashes", this.slashes, (t) => ({ ...t }));
-    lerpIdx("soulRipProjectiles", this.soulRipProjectiles, (t) => ({ ...t }));
-    lerpIdx("lightningStrikes", this.lightningStrikes, (t) => ({ ...t }));
+    lerpById("projectiles", this.projectiles);
+    lerpById("bossArcaneProjs", this.bossArcaneProjs);
+    lerpById("toxicGrenades", this.toxicGrenades);
+    lerpById("toxicExplosions", this.toxicExplosions);
+    lerpById("daggers", this.daggers);
+    lerpById("throwingAxes", this.throwingAxes);
+    lerpById("boomerangs", this.boomerangs);
+    lerpById("pickups", this.pickups);
+    lerpById("xpOrbs", this.xpOrbs);
+    lerpById("groundSlams", this.groundSlams);
+    lerpById("slashes", this.slashes);
+    lerpById("soulRipProjectiles", this.soulRipProjectiles);
+    lerpById("lightningStrikes", this.lightningStrikes);
   }
 
   /**
@@ -4473,6 +4529,7 @@ export class Game {
       const vx = Math.cos(ang) * spd;
       const vy = Math.sin(ang) * spd;
       this.daggers.push({
+        id: this.netAllocObjId(),
         x: px + ox + Math.cos(ang) * 16,
         y: py + oy + Math.sin(ang) * 16,
         vx,
@@ -4526,6 +4583,7 @@ export class Game {
     while (this.throwingAxes.length >= maxAx) this.throwingAxes.shift();
     for (const vx0 of vxs) {
       this.throwingAxes.push({
+        id: this.netAllocObjId(),
         x: spawnX,
         y: spawnY,
         ox: spawnX,
@@ -4609,6 +4667,7 @@ export class Game {
     while (this.boomerangs.length >= maxBr) this.boomerangs.shift();
     for (const a of angles) {
       this.boomerangs.push({
+        id: this.netAllocObjId(),
         x: spawnX,
         y: spawnY,
         vx: Math.cos(a) * spd,
@@ -4927,6 +4986,7 @@ export class Game {
     const maxLife = Math.max(boltDur, impactDur);
     const seed = Math.random() * 9999;
     this.lightningStrikes.push({
+      id: this.netAllocObjId(),
       x,
       y,
       r: radiusWorld,
