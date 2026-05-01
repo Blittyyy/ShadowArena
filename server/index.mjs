@@ -20,6 +20,13 @@ app.use(
     credentials: true,
   })
 );
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    name: "shadow-arena-online",
+    hint: "This host is Socket.IO relay only — open /health ; game uses MULTIPLAYER_SERVER_URL without a path.",
+  });
+});
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
