@@ -6,10 +6,10 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-less-tug-feel";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-stop-dwell";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-05-02-less-tug-feel";
+import { Game } from "./game.js?v=2026-05-02-stop-dwell";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,

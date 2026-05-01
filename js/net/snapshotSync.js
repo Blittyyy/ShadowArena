@@ -17,6 +17,8 @@ export const JOINER_RECON_SNAP_PX = 102;
 export const JOINER_RECON_SOFT_ALPHA_MOVING = 0.012;
 /** Faster blend when idle and above idle dead zone (settles leftover error after releasing). */
 export const JOINER_RECON_SOFT_ALPHA_IDLE = 0.042;
+/** After releasing input: keep moving deadzone briefly so idle branch doesn’t “micro-nudge”. */
+export const JOINER_RECON_STOP_DWELL_MS = 260;
 
 /** @deprecated Prefer JOINER_RECON_DEADZONE_IDLE_PX / MOVING — kept for tooling */
 export const JOINER_RECON_DEADZONE_PX = JOINER_RECON_DEADZONE_IDLE_PX;

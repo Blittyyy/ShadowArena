@@ -9,7 +9,8 @@ import {
   JOINER_RECON_SOFT_ALPHA_IDLE,
   JOINER_RECON_SOFT_ALPHA_MOVING,
   JOINER_RECON_SNAP_PX,
-} from "./net/snapshotSync.js?v=2026-05-02-less-tug-feel";
+  JOINER_RECON_STOP_DWELL_MS,
+} from "./net/snapshotSync.js?v=2026-05-02-stop-dwell";
 import {
   drawPlayer,
   drawXpOrb,
@@ -556,6 +557,8 @@ export class Game {
     /** Online client prediction/reconciliation: latest server position for local seat. */
     this.netLocalServerX = NaN;
     this.netLocalServerY = NaN;
+    /** Joiner reconcile: last time local movement input was considered “steering”; used after release dwell. */
+    this._netLastSteerWallMs = 0;
     /** Online client interpolation: per-seat position buffers (remote seats only). */
     this.netRemotePosBuf = [[], [], [], []];
     this.netRemotePosPtr = [0, 0, 0, 0];
@@ -658,6 +661,7 @@ export class Game {
     this.particles = [];
     this.floatTexts = [];
     this._netPendingEvents = [];
+    this._netLastSteerWallMs = 0;
     this._netEnemyById = null;
     this._netLastEnemyHp = null;
     this._netLastEnemyDmgAt = null;
@@ -4007,9 +4011,15 @@ export class Game {
     const inp = typeof this.netGetLocalInput === "function" ? this.netGetLocalInput() : null;
     const inputMag = inp ? Math.hypot(inp.x ?? 0, inp.y ?? 0) : 0;
     const steering = inputMag >= 0.07;
+    if (steering) this._netLastSteerWallMs = performance.now();
+    const inStopDwell =
+      !steering &&
+      JOINER_RECON_STOP_DWELL_MS > 0 &&
+      performance.now() - (this._netLastSteerWallMs ?? 0) < JOINER_RECON_STOP_DWELL_MS;
 
-    const deadPx = steering ? JOINER_RECON_DEADZONE_MOVING_PX : JOINER_RECON_DEADZONE_IDLE_PX;
-    const softA = steering ? JOINER_RECON_SOFT_ALPHA_MOVING : JOINER_RECON_SOFT_ALPHA_IDLE;
+    const useMovingFeel = steering || inStopDwell;
+    const deadPx = useMovingFeel ? JOINER_RECON_DEADZONE_MOVING_PX : JOINER_RECON_DEADZONE_IDLE_PX;
+    const softA = useMovingFeel ? JOINER_RECON_SOFT_ALPHA_MOVING : JOINER_RECON_SOFT_ALPHA_IDLE;
 
     if (d <= deadPx) {
       this._netMismatchLogAcc = 0;
