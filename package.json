@@ -4,7 +4,7 @@
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "build": "echo \"No bundler — run npm ci --omit=dev before deploy so node_modules/three exists.\""
+    "build": "node scripts/vercel-static-build.mjs"
   },
   "devDependencies": {
     "pngjs": "^7.0.0",

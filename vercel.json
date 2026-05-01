@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm ci --omit=dev",
-  "buildCommand": "npm run build"
+  "buildCommand": "node scripts/vercel-static-build.mjs",
+  "outputDirectory": "public"
 }

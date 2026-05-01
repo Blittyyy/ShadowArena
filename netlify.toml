@@ -1,8 +1,8 @@
 # Static site — ES modules load three from ./node_modules (installed at build time).
 
 [build]
-  command = "npm ci --omit=dev"
-  publish = "."
+  command = "npm ci --omit=dev && npm run build"
+  publish = "public"
 
 [build.environment]
   NODE_VERSION = "20"
