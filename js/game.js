@@ -2,7 +2,12 @@ import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-
 import { loadAudioSettings } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
 import { clamp, dist, angle, randRange } from "./mathutil.js";
 import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
-import { INTERPOLATION_DELAY_MS } from "./net/snapshotSync.js?v=2026-04-30-net-jitter-1";
+import {
+  INTERPOLATION_DELAY_MS,
+  JOINER_RECON_DEADZONE_PX,
+  JOINER_RECON_SOFT_ALPHA,
+  JOINER_RECON_SNAP_PX,
+} from "./net/snapshotSync.js?v=2026-05-02-joiner-recon";
 import {
   drawPlayer,
   drawXpOrb,
@@ -1853,6 +1858,7 @@ export class Game {
         );
         this.netGetLocalInput = () => getMovement(localSeat);
         this.predictLocalMovement(dt, localSeat);
+        this.netReconcileLocalPlayer(dt, localSeat);
         this.applyRemotePlayerInterpolation(localSeat);
 
         // Advance short-lived VFX timers locally so they don't "stick" between snapshots.
@@ -3980,9 +3986,57 @@ export class Game {
   }
 
   /**
-   * Apply a movement-only prediction step for the local seat.
-   * Mirrors the position/facing parts of `updatePlayer` without spawning combat/VFX.
+   * Joiner only: reconcile predicted XY toward latest host sample (feel-first thresholds).
+   * — ≤ deadzone: no correction —  deadzone–snap: tiny per-frame blend — > snap: teleport once.
    */
+  netReconcileLocalPlayer(dt, seat) {
+    const p = this.players?.[seat];
+    if (!p) return;
+    const sx = Number(this.netLocalServerX);
+    const sy = Number(this.netLocalServerY);
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
+
+    const dx = sx - p.x;
+    const dy = sy - p.y;
+    const d = Math.hypot(dx, dy);
+    this._netLastReconcileD = d;
+
+    if (d <= JOINER_RECON_DEADZONE_PX) {
+      this._netMismatchLogAcc = 0;
+      return;
+    }
+    const mpDbg =
+      typeof window !== "undefined" &&
+      ((window.MULTIPLAYER_DEBUG === true) ||
+        (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1"));
+
+    if (d > JOINER_RECON_SNAP_PX) {
+      p.x = sx;
+      p.y = sy;
+      if (mpDbg) this._netBumpJoinerMismatchLog(dt, d);
+      return;
+    }
+
+    const a = JOINER_RECON_SOFT_ALPHA;
+    p.x += dx * a;
+    p.y += dy * a;
+
+    if (mpDbg) this._netBumpJoinerMismatchLog(dt, d);
+  }
+
+  /** @param {number} dt @param {number} d */
+  _netBumpJoinerMismatchLog(dt, d) {
+    if (d <= JOINER_RECON_DEADZONE_PX) return;
+    this._netMismatchLogAcc = (this._netMismatchLogAcc ?? 0) + dt;
+    if (this._netMismatchLogAcc < 2) return;
+    this._netMismatchLogAcc = 0;
+    try {
+      console.warn("[mp] joiner reconcile distance high (predicted vs host)", Math.round(d), "px");
+    } catch {
+      //
+    }
+  }
+
   predictLocalMovement(dt, seat) {
     const p = this.players?.[seat];
     if (!p) return;
@@ -4197,6 +4251,7 @@ export class Game {
         Math.ceil(dx).toString(),
         "#e8d4ff"
       );
+      this.tryPlayEnemyHitSfx(e);
 
       if (debug) {
         try {
@@ -4263,7 +4318,10 @@ export class Game {
     for (let i = arr.length - 1; i >= 0; i--) {
       const e = arr[i];
       if (!e || typeof e.id !== "number") continue;
-      if (e._netSeen === false) arr.splice(i, 1);
+      if (e._netSeen === false) {
+        this.playEnemyDeathSfx();
+        arr.splice(i, 1);
+      }
     }
 
     // Id-based lists (avoids index swapping artifacts for joiners).

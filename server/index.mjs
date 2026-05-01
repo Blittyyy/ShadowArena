@@ -237,10 +237,14 @@ io.on("connection", (socket) => {
     if (!room || !room.started || socket.id === room.hostId) return;
     const m = room.members.get(socket.id);
     if (!m) return;
+    const seqRaw = payload?.seq;
+    const seq =
+      typeof seqRaw === "number" && Number.isFinite(seqRaw) ? Math.floor(seqRaw) : undefined;
     io.to(room.hostId).emit("game:inputRelay", {
       seat: m.seat,
       ax: Number(payload?.ax) || 0,
       ay: Number(payload?.ay) || 0,
+      ...(seq !== undefined ? { seq } : {}),
     });
   });
 

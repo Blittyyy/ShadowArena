@@ -6,10 +6,10 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-net-jitter-1";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-joiner-recon";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-04-30-touch-layout";
+import { Game } from "./game.js?v=2026-05-02-joiner-recon";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -1283,7 +1283,8 @@ async function main() {
             `room=${gOnlineSession.roomCode ?? ""} seat=${gOnlineSession.mySeat ?? gOnlineSession.hostSeat ?? ""}\\n` +
             `socket=${sock?.id ?? ""} ping=${Number.isFinite(pingMs) ? pingMs : "-"}ms\\n` +
             `snapAgo=${Number.isFinite(recvAgoMs) ? Math.round(recvAgoMs) : "-"}ms ev=${evN}\\n` +
-            `inputSend=${inputN}/frame`;
+            `inputSend=${inputN}/frame\\n` +
+            `corrPx=${Number.isFinite(game._netLastReconcileD) ? Math.round(game._netLastReconcileD) : "-"}`;
         }
       } else if (gMpDebugEl) {
         gMpDebugEl.style.display = "none";
@@ -1343,7 +1344,8 @@ async function main() {
 
         const emitInput = (ax, ay) => {
           try {
-            sock.emit("game:input", { ax, ay });
+            gOnlineSession.inputSeq = (gOnlineSession.inputSeq ?? 0) + 1;
+            sock.emit("game:input", { ax, ay, seq: gOnlineSession.inputSeq });
           } catch {
             //
           }
@@ -1362,9 +1364,9 @@ async function main() {
           }
         }
 
-        // Steady-state send (60 Hz) to keep host authoritative state tight.
+        // Steady-state send (~30 Hz); change + stop burst still immediate.
         gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
-        const sendDt = 1 / 60;
+        const sendDt = 1 / 30;
         if (gOnlineSession.inputAcc >= sendDt) {
           gOnlineSession.inputAcc = 0;
           emitInput(m.x, m.y);
@@ -1485,6 +1487,8 @@ async function main() {
       roomCode,
       hostSeat: 0,
       snapAcc: 0,
+      /** Latest applied input seq per seat (guests only); ignores stale reorder. */
+      inputRelaySeq: [0, 0, 0, 0],
       // Deadman: if a client stops sending input (packet loss / focus loss), force stop.
       inputLastMs: [performance.now(), 0, 0, 0],
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
@@ -1492,10 +1496,20 @@ async function main() {
     setOnlineHostBridge(0);
 
     socket.off("game:inputRelay");
-    socket.on("game:inputRelay", ({ seat, ax, ay }) => {
-      setHostRemoteMovement(seat, ax, ay);
+    socket.on("game:inputRelay", ({ seat, ax, ay, seq }) => {
+      const s = Math.max(0, Math.min(3, Number(seat) | 0));
+      const n = Number(seq);
+      if (
+        typeof seq !== "undefined" &&
+        Number.isFinite(n) &&
+        Array.isArray(gOnlineSession?.inputRelaySeq)
+      ) {
+        const last = gOnlineSession.inputRelaySeq[s] ?? 0;
+        if (n <= last) return;
+        gOnlineSession.inputRelaySeq[s] = Math.floor(n);
+      }
+      setHostRemoteMovement(s, ax, ay);
       if (gOnlineSession?.role === "host" && Array.isArray(gOnlineSession.inputLastMs)) {
-        const s = Math.max(0, Math.min(3, Number(seat) | 0));
         gOnlineSession.inputLastMs[s] = performance.now();
       }
     });
@@ -1553,6 +1567,7 @@ async function main() {
       roomCode,
       mySeat,
       lastEmittedInput: null,
+      inputSeq: 0,
       _stopBurst: 0,
       _stopBurstT: 0,
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
@@ -1580,7 +1595,8 @@ async function main() {
     // If the joiner loses focus / hides the tab, force-stop on the host immediately.
     const stopNow = () => {
       try {
-        socket.emit("game:input", { ax: 0, ay: 0 });
+        gOnlineSession.inputSeq = (gOnlineSession.inputSeq ?? 0) + 1;
+        socket.emit("game:input", { ax: 0, ay: 0, seq: gOnlineSession.inputSeq });
       } catch {
         //
       }

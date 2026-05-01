@@ -4,8 +4,12 @@
 import { CONFIG } from "../config.js?v=2026-04-30-coop-vs-balance-1";
 import { findUpgradeById } from "../upgrades.js";
 
-export const RECONCILE_LERP = 0.12;
-export const SNAP_DISTANCE = 120;
+/** Joiner local-vs-host XY: corrections below this (px) are ignored (feel-first). */
+export const JOINER_RECON_DEADZONE_PX = 20;
+/** Above this gap (px), snap to host XY once (large desync / collision mismatch). */
+export const JOINER_RECON_SNAP_PX = 80;
+/** Between deadzone and snap: per-frame fractional correction (`dx * alpha`). ~20–80px band. */
+export const JOINER_RECON_SOFT_ALPHA = 0.03;
 export const INTERPOLATION_DELAY_MS = 120;
 
 function snapEnemy(e) {
@@ -253,6 +257,11 @@ export function applyGameSnapshot(game, snap) {
     typeof window !== "undefined" &&
     ((window.MULTIPLAYER_DEBUG === true) ||
       (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1"));
+  /** Joiner-only: XP/level come from snapshots; play economy SFX on edges (no host pickUp sim). */
+  const clientEcoPrev =
+    game?.netMode === "client"
+      ? { xp: Number(game.xp ?? 0), lvl: Number(game.level ?? 1) }
+      : null;
   game.time = snap.t ?? game.time;
   game.mode = snap.mode ?? game.mode;
   game.level = snap.level ?? game.level;
@@ -317,31 +326,7 @@ export function applyGameSnapshot(game, snap) {
     applyPlayer(game.players[i], ps, { skipPos: game?.netMode === "client" });
   }
 
-  // Server reconciliation: gently pull local predicted player toward server position.
-  if (game?.netMode === "client" && localSeat >= 0 && game.players?.[localSeat]) {
-    const p = game.players[localSeat];
-    const sx = Number(game.netLocalServerX);
-    const sy = Number(game.netLocalServerY);
-    if (Number.isFinite(sx) && Number.isFinite(sy)) {
-      const dx = sx - p.x;
-      const dy = sy - p.y;
-      const d = Math.hypot(dx, dy);
-      if (d > SNAP_DISTANCE) {
-        p.x = sx;
-        p.y = sy;
-      } else {
-        // When the joiner isn't pressing movement, avoid "creep" corrections that feel like sliding.
-        const localInput = typeof game.netGetLocalInput === "function" ? game.netGetLocalInput() : null;
-        const inputMag = localInput ? Math.hypot(localInput.x ?? 0, localInput.y ?? 0) : 1;
-        if (inputMag < 0.05 && d < 8) {
-          // Ignore micro corrections.
-        } else {
-          p.x += dx * RECONCILE_LERP;
-          p.y += dy * RECONCILE_LERP;
-        }
-      }
-    }
-  }
+  // Local joiner reconcile runs every frame in Game.update (`netReconcileLocalPlayer`).
   if (game.player) {
     game.playerFacingRight = !!game.player.facingRight;
     game.playerWalkKind = game.player.walkKind;
@@ -385,4 +370,16 @@ export function applyGameSnapshot(game, snap) {
 
   game.characterIds = (game.players ?? []).map((p) => p?.characterId ?? "mage");
   game.characterId = game.characterIds[0] ?? "mage";
+
+  if (
+    clientEcoPrev &&
+    game.netMode === "client" &&
+    typeof game.playXpPickupSfx === "function" &&
+    typeof game.playLevelUpSfx === "function"
+  ) {
+    const nx = Number(game.xp ?? 0);
+    const nl = Number(game.level ?? 1);
+    if (nx > clientEcoPrev.xp + 0.01) game.playXpPickupSfx();
+    if (nl > clientEcoPrev.lvl) game.playLevelUpSfx();
+  }
 }
