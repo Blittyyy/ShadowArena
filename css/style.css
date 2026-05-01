@@ -29,6 +29,19 @@ html, body {
   gap: 0;
 }
 
+/* Touch-first: show the full title art (no crop). */
+html.is-touch-game-chrome #game-root {
+  background-size: contain;
+  background-position: center top;
+}
+
+/* Touch-first landscape: bias the art upward (keep title visible). */
+@media (orientation: landscape) {
+  html.is-touch-game-chrome #game-root {
+    background-position: center 8%;
+  }
+}
+
 /* -------------------------
    Menu fog atmosphere
    ------------------------- */
@@ -501,10 +514,17 @@ html.is-touch-game-chrome #overlay-menu .menu-btn {
 
 /* Keep menu stack below baked title art; allow scroll if still tight (landscape). */
 html.is-touch-game-chrome #overlay-menu .menu-shell {
-  max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(100px, 28vmin, 220px));
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(100px, 28vmin, 220px));
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(120px, 30vmin, 240px));
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(120px, 30vmin, 240px));
   overflow-y: auto;
   width: min(760px, calc(100% - 22px));
+}
+
+@media (orientation: landscape) {
+  html.is-touch-game-chrome #overlay-menu .menu-shell {
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(160px, 36vmin, 320px));
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(160px, 36vmin, 320px));
+  }
 }
 
 .menu-bones-canvas {
