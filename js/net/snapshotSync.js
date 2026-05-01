@@ -34,6 +34,7 @@ function snapEnemy(e) {
 function snapBasicPos(o) {
   if (!o) return null;
   return {
+    id: o.id,
     x: o.x,
     y: o.y,
     vx: o.vx,
@@ -329,8 +330,15 @@ export function applyGameSnapshot(game, snap) {
         p.x = sx;
         p.y = sy;
       } else {
-        p.x += dx * RECONCILE_LERP;
-        p.y += dy * RECONCILE_LERP;
+        // When the joiner isn't pressing movement, avoid "creep" corrections that feel like sliding.
+        const localInput = typeof game.netGetLocalInput === "function" ? game.netGetLocalInput() : null;
+        const inputMag = localInput ? Math.hypot(localInput.x ?? 0, localInput.y ?? 0) : 1;
+        if (inputMag < 0.05 && d < 8) {
+          // Ignore micro corrections.
+        } else {
+          p.x += dx * RECONCILE_LERP;
+          p.y += dy * RECONCILE_LERP;
+        }
       }
     }
   }

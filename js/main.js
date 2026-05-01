@@ -1502,6 +1502,14 @@ async function main() {
     socket.off("game:upgradePickRelay");
     socket.on("game:upgradePickRelay", ({ seat, upgradeId }) => {
       game?.applyUpgradeByRemoteChoice(upgradeId, seat);
+      // Ensure host UI exits the upgrade overlay immediately after remote picks.
+      try {
+        const upgradeChoices = document.getElementById("upgrade-choices");
+        if (upgradeChoices) upgradeChoices.innerHTML = "";
+      } catch {
+        //
+      }
+      refreshOverlays(game);
     });
 
     refreshOverlays(game);

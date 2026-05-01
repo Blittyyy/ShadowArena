@@ -1851,6 +1851,7 @@ export class Game {
           0,
           Math.min(3, Math.floor(Number(this?._jamLocalSeats?.[0] ?? 0) || 0))
         );
+        this.netGetLocalInput = () => getMovement(localSeat);
         this.predictLocalMovement(dt, localSeat);
         this.applyRemotePlayerInterpolation(localSeat);
 
@@ -4372,6 +4373,12 @@ export class Game {
    * Keeps online feel closer to local without syncing particles/floatText objects.
    */
   netTickClientVfx(dt) {
+    // Decay enemy hit flash locally (host normally does this in updateEnemies()).
+    for (const e of this.enemies ?? []) {
+      if (!e) continue;
+      if ((e.hitFlash ?? 0) > 0) e.hitFlash = Math.max(0, (e.hitFlash ?? 0) - dt);
+    }
+
     // Slashes lifetime.
     if (Array.isArray(this.slashes)) {
       for (let i = this.slashes.length - 1; i >= 0; i--) {
