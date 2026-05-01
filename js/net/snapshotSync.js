@@ -42,20 +42,11 @@ function takeSnapArray(arr) {
   return a;
 }
 
-/**
- * Snapshot old positions/camera before applying a net snapshot (client smoothes renders between ticks).
- * @param {import("../game.js").Game} game
- */
-export function captureClientNetInterpAnchors(game) {
-  game._interpPrevPlayers = (game.players ?? []).map((p) =>
-    p ? { x: p.x, y: p.y } : { x: 0, y: 0 }
-  );
-  game._interpPrevEnemies = (game.enemies ?? []).map((e) =>
-    e ? { x: e.x, y: e.y } : { x: 0, y: 0 }
-  );
-  game._interpPrevCamX = game.camX;
-  game._interpPrevCamY = game.camY;
-  game._interpT0 = performance.now();
+/** @param {unknown} raw */
+function assignReplayArraysFromSnap(raw) {
+  const a = Array.isArray(raw) ? raw : [];
+  reviveSetsInObject(a);
+  return a;
 }
 
 function snapPlayer(p) {
@@ -136,12 +127,9 @@ function applyPlayer(target, snap) {
   if (snap.stats && typeof snap.stats === "object") {
     Object.assign(target.stats, snap.stats);
   }
-  target.whipSwings = safeJson(snap.whipSwings) ?? [];
-  target.hammers = safeJson(snap.hammers) ?? [];
-  target.arcaneRunes = safeJson(snap.arcaneRunes) ?? [];
-  reviveSetsInObject(target.whipSwings);
-  reviveSetsInObject(target.hammers);
-  reviveSetsInObject(target.arcaneRunes);
+  target.whipSwings = assignReplayArraysFromSnap(snap.whipSwings);
+  target.hammers = assignReplayArraysFromSnap(snap.hammers);
+  target.arcaneRunes = assignReplayArraysFromSnap(snap.arcaneRunes);
 }
 
 /**
@@ -199,7 +187,6 @@ export function buildGameSnapshot(game) {
  */
 export function applyGameSnapshot(game, snap) {
   if (!snap || snap.v !== 1) return;
-  if (game.netMode === "client") captureClientNetInterpAnchors(game);
   game.time = snap.t ?? game.time;
   game.mode = snap.mode ?? game.mode;
   game.level = snap.level ?? game.level;

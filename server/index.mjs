@@ -37,6 +37,8 @@ const io = new Server(server, {
     origin: ALLOWED.length ? ALLOWED : true,
     methods: ["GET", "POST"],
   },
+  // Large JSON snapshots — bundle-level compression spikes CPU/jank on weaker clients decoding every tick.
+  perMessageDeflate: false,
 });
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

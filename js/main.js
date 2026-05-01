@@ -6,7 +6,7 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-client-smooth-1";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-net-latency-1";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
 import { Game } from "./game.js?v=2026-04-30-client-smooth-1";
@@ -1147,7 +1147,8 @@ async function main() {
 
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
         gOnlineSession.snapAcc = (gOnlineSession.snapAcc ?? 0) + dt;
-        if (gOnlineSession.snapAcc >= 0.05) {
+        /** ~30 Hz — balance bandwidth vs responsiveness (was 50ms / polling-first transport compounded lag). */
+        if (gOnlineSession.snapAcc >= 0.033) {
           gOnlineSession.snapAcc = 0;
           try {
             gOnlineSession.socket.emit("game:snapshot", buildGameSnapshot(game));
@@ -1157,14 +1158,19 @@ async function main() {
         }
       }
       if (gOnlineSession?.role === "client" && game.netMode === "client") {
-        gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
-        if (gOnlineSession.inputAcc >= 0.04) {
-          gOnlineSession.inputAcc = 0;
-          const seat = Math.max(
-            0,
-            Math.min(3, Math.floor(Number(gOnlineSession.mySeat) || 0))
-          );
-          const m = getMovement(seat);
+        const seat = Math.max(
+          0,
+          Math.min(3, Math.floor(Number(gOnlineSession.mySeat) || 0))
+        );
+        const m = getMovement(seat);
+        const prev = gOnlineSession.lastEmittedInput;
+        const tol = 0.004;
+        if (
+          !prev ||
+          Math.abs(m.x - prev.ax) > tol ||
+          Math.abs(m.y - prev.ay) > tol
+        ) {
+          gOnlineSession.lastEmittedInput = { ax: m.x, ay: m.y };
           try {
             gOnlineSession.socket.emit("game:input", { ax: m.x, ay: m.y });
           } catch {
@@ -1218,6 +1224,7 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "solo";
+    game.netClientSeat = null;
 
     refreshOverlays(game);
     syncHud(game);
@@ -1249,6 +1256,7 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "host";
+    game.netClientSeat = null;
     gOnlineSession = {
       role: "host",
       socket,
@@ -1298,13 +1306,14 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "client";
+    game.netClientSeat = mySeat;
     setOnlineGuestSeat(mySeat);
     gOnlineSession = {
       role: "client",
       socket,
       roomCode,
       mySeat,
-      inputAcc: 0,
+      lastEmittedInput: null,
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
     };
 
@@ -1552,9 +1561,12 @@ async function main() {
       return;
     }
     disconnectOnlineSocket();
+    const pollFirstOnline =
+      typeof window !== "undefined" &&
+      window.MULTIPLAYER_POLLING_FIRST === true;
     onlineSocket = globalThis.io(base, {
-      // Polling first avoids noisy WebSocket errors in DevTools when WS is blocked; still upgrades later.
-      transports: ["polling", "websocket"],
+      // WebSocket first = lower RTT; set window.MULTIPLAYER_POLLING_FIRST=true to force old polling-primary dev behavior.
+      transports: pollFirstOnline ? ["polling", "websocket"] : ["websocket", "polling"],
     });
     onlineSocket.once("connect_error", (err) => {
       if (onlineErrEl)
@@ -1610,8 +1622,11 @@ async function main() {
       return;
     }
     disconnectOnlineSocket();
+    const pollFirstOnlineJoin =
+      typeof window !== "undefined" &&
+      window.MULTIPLAYER_POLLING_FIRST === true;
     onlineSocket = globalThis.io(base, {
-      transports: ["polling", "websocket"],
+      transports: pollFirstOnlineJoin ? ["polling", "websocket"] : ["websocket", "polling"],
     });
     onlineSocket.once("connect_error", (err) => {
       if (onlineErrEl)
