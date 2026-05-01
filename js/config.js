@@ -650,13 +650,6 @@ export const CONFIG = {
   BOSS2_RING_OUT_SPEED: 270,
   /** If Boss2 sheet uses a flat near-white matte; same key path as slime. */
   BOSS2_KEY_WHITE_BACKGROUND: false,
-  /**
-   * World-space padding merged into camera bounds while Sentinel lives (solo + MP).
-   * Large sprite + orbit need extra framing so attacks don’t sit on the screen rim.
-   */
-  BOSS2_CAMERA_FRAMING_PAD: 168,
-  /** Vertical framing uses pad × mult (floating boss stays fully in view). */
-  BOSS2_CAMERA_FRAMING_PAD_Y_MULT: 0.95,
 
   XP_ORB_RADIUS: 7,
   XP_ORB_MAGNET: 140,

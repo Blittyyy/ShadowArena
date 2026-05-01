@@ -468,8 +468,6 @@ export class Game {
     this.playerHitTimer = 0;
     this.playerMoving = false;
     this.endedByQuit = false;
-    /** Dev: toggle from HUD “Observe enemies”. */
-    this.devSafeFromEnemies = false;
     this.playerFacingVec = { x: 1, y: 0 };
     this.whipCd = 0;
     this.whipSwings = [];
@@ -535,11 +533,12 @@ export class Game {
     /** @type {HTMLAudioElement[] | null} */
     this._sfxLevelUpPool = null;
     this._sfxLevelUpPoolIx = 0;
+    /** `'solo'` | `'host'` | `'client'` — online guests apply snapshots only. */
+    this.netMode = "solo";
     this.reset();
   }
 
   reset() {
-    const keepEnemyObserve = this.devSafeFromEnemies === true;
     this.mode = "playing";
     this.endedByQuit = false;
     this.time = 0;
@@ -633,10 +632,6 @@ export class Game {
     this.hammers = [];
     /** Shared rotation; each hammer uses phase + i/n * 2π so spacing stays even when count changes. */
     this.hammerOrbitPhase = 0;
-    /** Dev: when true, staff bolts do not fire and hammer deals no damage (see [ in main.js). */
-    this.devStaffDisabled = false;
-    /** Dev: no damage from enemies (contact + exploder); enemies are not cleared on overlap. */
-    this.devSafeFromEnemies = keepEnemyObserve;
     this.playerFacingVec = { x: 1, y: 0 };
     this.whipCd = 0.15;
     this.whipSwings = [];
@@ -784,54 +779,6 @@ export class Game {
     const out = [];
     for (let i = 0; i < n; i++) out.push(uniq[i] ?? uniq[0] ?? null);
     return out;
-  }
-
-  getDevWeaponOverride() {
-    const w = typeof window !== "undefined" ? window : null;
-    const direct = w && typeof w.DEV_WEAPON === "string" ? w.DEV_WEAPON : "";
-    if (direct) return direct.trim();
-    try {
-      const sp = typeof location !== "undefined" ? new URLSearchParams(location.search) : null;
-      const q = sp ? (sp.get("devWeapon") || sp.get("devweapon") || "") : "";
-      return (q || "").trim();
-    } catch {
-      return "";
-    }
-  }
-
-  applyDevWeaponOverride() {
-    const w = this.getDevWeaponOverride();
-    this.devWeapon = w;
-    const active = typeof w === "string" && w.length > 0 && w.toLowerCase() !== "off";
-    this.devNoPrimaryAttack = active;
-
-    if (!active) return;
-
-    // Disable all optional weapons by default.
-    this.stats.daggerLvl = 0;
-    this.stats.throwingAxeLvl = 0;
-    this.stats.boomerangLvl = 0;
-    this.stats.lightningLvl = 0;
-    this.stats.arcaneRunesLvl = 0;
-    this.stats.hammerCount = 0;
-    this.stats.whipCount = 0;
-    this.stats.poisonArrows = 0;
-
-    // Enable only the selected one at a strong test level.
-    const k = w.toLowerCase();
-    if (k === "dagger") this.stats.daggerLvl = 8;
-    else if (k === "axe" || k === "throwing_axe" || k === "throwingaxe") this.stats.throwingAxeLvl = 8;
-    else if (k === "boomerang") this.stats.boomerangLvl = 8;
-    else if (k === "lightning") this.stats.lightningLvl = 8;
-    else if (k === "hammer") this.stats.hammerCount = 2;
-    else if (k === "whip") this.stats.whipCount = 1;
-    else if (k === "runes" || k === "arcane_runes") {
-      // Runes are mage-only; leave character selection to you.
-      this.stats.arcaneRunesLvl = 8;
-    }
-
-    // Disable base primary attacks for isolation (arrows/staff bolts & berserker slashes).
-    this.devStaffDisabled = true;
   }
 
   getSlashCooldown(player = this.player) {
@@ -1666,6 +1613,23 @@ export class Game {
 
   update(dt) {
     if (this.mode === "gameOver") return;
+    if (this.netMode === "client") {
+      if (this.mode === "paused") {
+        this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+        return;
+      }
+      this.animTick += dt;
+      if (this.mode === "levelUp") {
+        this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+        this.updateParticles(dt);
+        this.updateFloatTexts(dt);
+        return;
+      }
+      this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+      this.updateParticles(dt);
+      this.updateFloatTexts(dt);
+      return;
+    }
     if (this.mode === "paused") {
       this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
       return;
@@ -1679,9 +1643,6 @@ export class Game {
     }
 
     this.time += dt;
-
-    // Dev: optionally force a single weapon loadout for quick testing.
-    this.applyDevWeaponOverride();
 
     this.trySpawnBoss1();
     this.trySpawnBoss2();
@@ -1733,7 +1694,6 @@ export class Game {
     const tc = this.teamCenterAlive();
     let camC = tc;
     const alive = this.alivePlayers();
-    const sentinel = this.enemies.find((e) => e.typeId === "boss2" && (e.hp ?? 0) > 0);
 
     let minX = Infinity,
       minY = Infinity,
@@ -1749,27 +1709,10 @@ export class Game {
       maxY = Math.max(maxY, p.y);
     }
 
-    // Arcane Sentinel: merge into framing so orbit + oversized frames stay on-camera (solo + coop).
-    if (
-      sentinel &&
-      anyAlive &&
-      Number.isFinite(minX) &&
-      Number.isFinite(minY) &&
-      Number.isFinite(maxX) &&
-      Number.isFinite(maxY)
-    ) {
-      const pad = CONFIG.BOSS2_CAMERA_FRAMING_PAD ?? 148;
-      const padY = pad * ((CONFIG.BOSS2_CAMERA_FRAMING_PAD_Y_MULT ?? 0.95) || 0.95);
-      minX = Math.min(minX, sentinel.x - pad);
-      maxX = Math.max(maxX, sentinel.x + pad);
-      minY = Math.min(minY, sentinel.y - padY);
-      maxY = Math.max(maxY, sentinel.y + padY);
-    }
-
     const boundsOk = anyAlive && Number.isFinite(minX) && minX !== Infinity;
 
     if ((alive?.length ?? 0) >= 2 && boundsOk) {
-      // Camera center uses bounds midpoint (keeps outliers + Sentinel on-screen together).
+      // Camera center uses alive-players bounds midpoint (Sentinel not included — avoids panning/zooming away from a player).
       camC = { x: (minX + maxX) * 0.5, y: (minY + maxY) * 0.5 };
 
       const padPx = CONFIG.CAMERA_ZOOM_PADDING_PX ?? 120;
@@ -1817,9 +1760,6 @@ export class Game {
           p.y -= uy * spd * dt;
         }
       }
-    } else if (boundsOk && sentinel) {
-      // Solo (+ pause): centroid of player ∪ Sentinel padded bounds (orbit no longer peels off-screen edges).
-      camC = { x: (minX + maxX) * 0.5, y: (minY + maxY) * 0.5 };
     }
 
     const vw = viewWorldW();
@@ -2044,7 +1984,7 @@ export class Game {
     if (!tOk && !lvlOk) return;
     this.bossMilestones.boss1 = true;
 
-    const spawned = this.spawnEnemyOfType("boss1", { nearPlayer: false, skipBossInit: true });
+    const spawned = this.spawnEnemyOfType("boss1");
     if (!spawned) return;
     const boss = this.enemies[this.enemies.length - 1];
     this.initBoss1(boss, { withIntro: true });
@@ -2057,7 +1997,7 @@ export class Game {
     if (this.time + 1e-6 < tReq) return;
     this.bossMilestones.boss2 = true;
 
-    const spawned = this.spawnEnemyOfType("boss2", { nearPlayer: false, skipBossInit: true });
+    const spawned = this.spawnEnemyOfType("boss2");
     if (!spawned) return;
     const boss = this.enemies[this.enemies.length - 1];
     this.initBoss2(boss, { withIntro: true });
@@ -2277,7 +2217,6 @@ export class Game {
         this.bossArcaneProjs.splice(i, 1);
         continue;
       }
-      if (this.devSafeFromEnemies) continue;
       const rr = CONFIG.PLAYER_RADIUS;
       const er = pr.r ?? CONFIG.BOSS2_PROJ_RADIUS ?? 9;
       for (let pi = 0; pi < pls.length; pi++) {
@@ -2309,7 +2248,6 @@ export class Game {
         this.bossPulses.splice(i, 1);
         continue;
       }
-      if (this.devSafeFromEnemies) continue;
       if (this.time < (p.hitUntil ?? 0)) continue;
       const d = dist(px, py, p.x, p.y);
       const thick = p.thickness;
@@ -2350,12 +2288,9 @@ export class Game {
   /**
    * @param {string} typeId — key of ENEMY_TYPES
    * @param {{
-   *   nearPlayer?: boolean;
    *   at?: { x: number; y: number };
    *   spawnPopDuration?: number;
-   *   devBoss?: boolean;
-   *   skipBossInit?: boolean;
-   * }} [opts] — nearPlayer: dev spawn ~100px from player; at: exact world position (split spawns); spawnPopDuration: split pop scale seconds
+   * }} [opts] — at: exact world position (split spawns); spawnPopDuration: split pop scale seconds
    */
   spawnEnemyOfType(typeId, opts = {}) {
     const def = ENEMY_TYPES[typeId];
@@ -2370,13 +2305,6 @@ export class Game {
     if (opts.at && Number.isFinite(opts.at.x) && Number.isFinite(opts.at.y)) {
       x = clamp(opts.at.x, def.radius * 2, CONFIG.WORLD_W - def.radius * 2);
       y = clamp(opts.at.y, def.radius * 2, CONFIG.WORLD_H - def.radius * 2);
-    } else if (opts.nearPlayer) {
-      const a = Math.random() * Math.PI * 2;
-      const d = 95 + Math.random() * 35;
-      x = this.player.x + Math.cos(a) * d;
-      y = this.player.y + Math.sin(a) * d;
-      x = clamp(x, def.radius * 2, CONFIG.WORLD_W - def.radius * 2);
-      y = clamp(y, def.radius * 2, CONFIG.WORLD_H - def.radius * 2);
     } else {
       const p = spawnPositionAroundPlayer(
         this.player.x,
@@ -2416,26 +2344,6 @@ export class Game {
             break;
           }
         }
-      } else if (opts.nearPlayer) {
-        for (let t = 0; t < 28; t++) {
-          const a = Math.random() * Math.PI * 2;
-          const d = 70 + Math.random() * 120;
-          const nx = clamp(
-            this.player.x + Math.cos(a) * d,
-            def.radius * 2,
-            CONFIG.WORLD_W - def.radius * 2
-          );
-          const ny = clamp(
-            this.player.y + Math.sin(a) * d,
-            def.radius * 2,
-            CONFIG.WORLD_H - def.radius * 2
-          );
-          if (!worldCircleBlockedByArena(nx, ny, def.radius)) {
-            x = nx;
-            y = ny;
-            break;
-          }
-        }
       }
     }
     // Difficulty scaling: every N seconds, HP increases by ~15%.
@@ -2451,16 +2359,6 @@ export class Game {
       typeof opts.spawnPopDuration === "number" && opts.spawnPopDuration > 0
         ? opts.spawnPopDuration
         : 0;
-    if (typeId === "boss1" && opts.devBoss) {
-      for (let i = this.enemies.length - 1; i >= 0; i--) {
-        if (this.enemies[i].typeId === "boss1") this.enemies.splice(i, 1);
-      }
-    }
-    if (typeId === "boss2" && opts.devBoss) {
-      for (let i = this.enemies.length - 1; i >= 0; i--) {
-        if (this.enemies[i].typeId === "boss2") this.enemies.splice(i, 1);
-      }
-    }
     this.enemies.push({
       id: (this.nextEnemyId = (this.nextEnemyId ?? 1) + 1) - 1,
       typeId,
@@ -2482,31 +2380,7 @@ export class Game {
           }
         : {}),
     });
-    const e = this.enemies[this.enemies.length - 1];
-    if (typeId === "boss1" && !opts.skipBossInit) {
-      if (opts.devBoss) {
-        // Prevent milestone spawn later in the same run.
-        this.bossMilestones.boss1 = true;
-        this.initBoss1(e, { withIntro: true });
-      } else {
-        this.initBoss1(e, { withIntro: false });
-      }
-    }
-    if (typeId === "boss2" && !opts.skipBossInit) {
-      if (opts.devBoss) {
-        this.bossMilestones.boss2 = true;
-        this.initBoss2(e, { withIntro: true });
-      } else {
-        this.initBoss2(e, { withIntro: false });
-      }
-    }
     return true;
-  }
-
-  /** Dev: spawn one enemy by type (see main.js hotkeys). */
-  devSpawnEnemy(typeId, opts) {
-    if (this.mode !== "playing" && this.mode !== "paused") return false;
-    return this.spawnEnemyOfType(typeId, opts);
   }
 
   updatePlayer(dt, playerIndex = 0) {
@@ -2609,31 +2483,29 @@ export class Game {
       }
     }
 
-    if (!this.devSafeFromEnemies) {
-      let contactDps = 0;
-      for (const e of this.enemies) {
-        const def = ENEMY_TYPES[e.typeId];
-        if (dist(p.x, p.y, e.x, e.y) < CONFIG.PLAYER_RADIUS + def.radius) {
-          contactDps += def.touchDps;
-        }
+    let contactDps = 0;
+    for (const e of this.enemies) {
+      const def = ENEMY_TYPES[e.typeId];
+      if (dist(p.x, p.y, e.x, e.y) < CONFIG.PLAYER_RADIUS + def.radius) {
+        contactDps += def.touchDps;
       }
-      if (contactDps > 0) {
-        p.hp -= contactDps * dt * CONFIG.PLAYER_CONTACT_DAMAGE_MULT;
-      }
+    }
+    if (contactDps > 0) {
+      p.hp -= contactDps * dt * CONFIG.PLAYER_CONTACT_DAMAGE_MULT;
+    }
 
-      if (CONFIG.CLEAR_ENEMIES_ON_PLAYER_CONTACT) {
-        const clearSec = CONFIG.CONTACT_CLEAR_DAMAGE_SECONDS ?? 0;
-        for (let i = this.enemies.length - 1; i >= 0; i--) {
-          const e = this.enemies[i];
-          const def = ENEMY_TYPES[e.typeId];
-          if (def?.isBoss || e.isBoss) continue;
-          if (def?.blocksContactClear) continue;
-          if (dist(p.x, p.y, e.x, e.y) < CONFIG.PLAYER_RADIUS + def.radius) {
-            if (clearSec > 0) {
-              p.hp -= def.touchDps * clearSec;
-            }
-            this.killEnemy(e);
+    if (CONFIG.CLEAR_ENEMIES_ON_PLAYER_CONTACT) {
+      const clearSec = CONFIG.CONTACT_CLEAR_DAMAGE_SECONDS ?? 0;
+      for (let i = this.enemies.length - 1; i >= 0; i--) {
+        const e = this.enemies[i];
+        const def = ENEMY_TYPES[e.typeId];
+        if (def?.isBoss || e.isBoss) continue;
+        if (def?.blocksContactClear) continue;
+        if (dist(p.x, p.y, e.x, e.y) < CONFIG.PLAYER_RADIUS + def.radius) {
+          if (clearSec > 0) {
+            p.hp -= def.touchDps * clearSec;
           }
+          this.killEnemy(e);
         }
       }
     }
@@ -2689,11 +2561,6 @@ export class Game {
 
     p.attackCd = (p.attackCd ?? 0) - dt;
     if ((p.attackCd ?? 0) <= 0) {
-      if (this.devNoPrimaryAttack === true) {
-        // Keep cadence stable but don't fire base attacks while dev-testing a single weapon.
-        p.attackCd = 0.25;
-        return;
-      }
       if (p.characterId === "berserker") {
         // Single red slash only. Auto-aim hit direction toward nearest enemy in range so kiting still hits.
         // Sprite facing remains movement-driven elsewhere (A/D); only the slash hitbox direction is aimed.
@@ -3707,11 +3574,7 @@ export class Game {
     const dmg = sourceDef.explosionDamage;
     this.spawnExplosionEffect(x, y, R);
 
-    if (
-      !this.devSafeFromEnemies &&
-      dist(this.player.x, this.player.y, x, y) <
-      R + CONFIG.PLAYER_RADIUS
-    ) {
+    if (dist(this.player.x, this.player.y, x, y) < R + CONFIG.PLAYER_RADIUS) {
       this.player.hp -= dmg;
       this.playerHitTimer = HIT_ANIM_DURATION;
       this.addFloatText(
@@ -3842,6 +3705,17 @@ export class Game {
       this.mode = "playing";
       this.pendingUpgrades = [];
     }
+  }
+
+  /** Online: guest chose a card; host validates seat + id then applies. */
+  applyUpgradeByRemoteChoice(upgradeId, fromSeat) {
+    if (this.netMode !== "host" || this.mode !== "levelUp") return;
+    const seat = Math.max(0, Math.min(3, Math.floor(fromSeat ?? -1)));
+    const cur = Math.max(0, Math.min((this.players?.length ?? 1) - 1, Math.floor(this.upgradePlayerIndex ?? 0)));
+    if (seat !== cur) return;
+    const u = (this.pendingUpgrades ?? []).find((x) => x && x.id === upgradeId);
+    if (!u) return;
+    this.applyUpgrade(u);
   }
 
   updateParticles(dt) {

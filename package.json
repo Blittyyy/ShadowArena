@@ -4,7 +4,8 @@
   "scripts": {
     "start": "serve -l 5173 .",
     "dev": "serve -l 5173 .",
-    "build": "node scripts/vercel-static-build.mjs"
+    "build": "node scripts/vercel-static-build.mjs",
+    "online-server": "npm start --prefix server"
   },
   "devDependencies": {
     "pngjs": "^7.0.0",

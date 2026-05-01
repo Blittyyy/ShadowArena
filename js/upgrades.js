@@ -431,6 +431,11 @@ export const UPGRADE_POOL = [
   },
 ];
 
+export function findUpgradeById(id) {
+  if (typeof id !== "string" || !id) return null;
+  return UPGRADE_POOL.find((u) => u && u.id === id) ?? null;
+}
+
 export function createBaseStats() {
   return {
     characterId: "mage",

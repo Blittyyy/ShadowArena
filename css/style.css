@@ -345,6 +345,8 @@ html, body {
   background: #151018;
   flex-shrink: 0;
   z-index: 1;
+  /* Gameplay is keyboard-driven; prevents the fullscreen canvas stealing clicks under menus/overlays. */
+  pointer-events: none;
 }
 
 /* Vampire Survivors–style XP bar pinned to viewport top */
@@ -391,6 +393,7 @@ html, body {
 }
 
 .vs-time {
+  grid-column: 2;
   justify-self: center;
   font-size: 22px;
   font-weight: 700;
@@ -399,15 +402,11 @@ html, body {
 }
 
 .vs-level {
+  grid-column: 3;
   justify-self: end;
   font-size: 13px;
   color: #a898c4;
   margin-right: 10px;
-}
-
-.vs-top-meta .btn-observe {
-  justify-self: end;
-  pointer-events: auto;
 }
 
 /* Overlays must sit above full-screen canvas */
@@ -420,31 +419,6 @@ html, body {
   justify-content: center;
   background: rgba(8, 5, 14, 0.82);
   pointer-events: auto;
-}
-
-.btn-observe {
-  display: block;
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #c8bdd8;
-  background: rgba(40, 32, 58, 0.95);
-  border: 1px solid rgba(155, 109, 255, 0.35);
-  border-radius: 6px;
-  cursor: pointer;
-  max-width: 160px;
-  line-height: 1.25;
-}
-
-.btn-observe:hover {
-  border-color: rgba(180, 140, 255, 0.55);
-  color: #efe8ff;
-}
-
-.btn-observe[aria-pressed="true"] {
-  background: rgba(60, 100, 70, 0.95);
-  border-color: rgba(120, 220, 150, 0.55);
-  color: #d8ffe4;
 }
 
 .overlay.hidden {
@@ -1887,4 +1861,92 @@ html, body {
 
 @media (max-height: 520px) {
   .hint { display: none; }
+}
+
+/* --- Online co-op (room codes) --- */
+.online-panel {
+  max-width: 420px;
+  text-align: left;
+}
+
+.online-panel code {
+  font-size: 12px;
+  color: #c9b8e8;
+}
+
+.online-err {
+  min-height: 1.25em;
+  color: #ff8a8a;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.online-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.online-join-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.online-code-input {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 18px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 8px;
+  border: 1px solid #5c4d72;
+  background: rgba(20, 16, 30, 0.95);
+  color: #f0ecf8;
+}
+
+.online-lobby-slots {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: #d8cfe8;
+}
+
+.online-lobby-row {
+  padding: 8px 10px;
+  background: rgba(30, 24, 44, 0.85);
+  border-radius: 8px;
+  border: 1px solid rgba(155, 109, 255, 0.2);
+}
+
+.online-char-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.online-char-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid #5c4d72;
+  background: linear-gradient(180deg, #3a3048 0%, #2a2235 100%);
+  color: #ede8f7;
+}
+
+.online-char-btn:hover {
+  border-color: #9b6dff;
+}
+
+.online-lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }

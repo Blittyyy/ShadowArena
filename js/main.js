@@ -1,4 +1,13 @@
-import { setupInput } from "./input.js";
+import {
+  setupInput,
+  getMovement,
+  clearOnlineInputBridge,
+  setOnlineGuestSeat,
+  setOnlineHostBridge,
+  setHostRemoteMovement,
+} from "./input.js";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-coop-vs-balance-1";
+import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
 import { Game } from "./game.js?v=2026-04-30-coop-vs-balance-1";
 import {
@@ -9,7 +18,6 @@ import {
 } from "./upgrades.js";
 import {
   loadAudioSettings,
-  resetAudioSettingsToDefaults,
   saveAudioSettings,
 } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
 
@@ -18,6 +26,11 @@ try {
 } catch {
   // ignore
 }
+
+/** Online session (set from `main()` closure when a net run starts). */
+let gOnlineSession = null;
+/** @type {object | null} */
+let gPendingClientSnap = null;
 
 const canvas = document.getElementById("game");
 const xpFill = document.getElementById("xp-fill");
@@ -53,7 +66,6 @@ const btnRestart = document.getElementById("btn-restart");
 const btnResume = document.getElementById("btn-resume");
 const btnEndRun = document.getElementById("btn-end-run");
 const hint = document.getElementById("hint");
-const btnObserveEnemies = document.getElementById("btn-observe-enemies");
 const menuFog = document.getElementById("menu-fog");
 const menuItems = Array.from(document.querySelectorAll("#overlay-menu .menu-item"));
 const menuBonesCanvas = document.getElementById("menu-bones-canvas");
@@ -62,6 +74,21 @@ const characterSelectHeaderPick = document.getElementById("character-select-head
 const characterSelectHeaderBrowse = document.getElementById("character-select-header-browse");
 const mpPlayerCountButtons = document.querySelectorAll(".mp-seg-btn[data-player-count]");
 const mpPlayerSlots = document.getElementById("mp-player-slots");
+const overlayOnlineMenu = document.getElementById("overlay-online-menu");
+const overlayOnlineLobby = document.getElementById("overlay-online-lobby");
+const onlineErrEl = document.getElementById("online-err");
+const onlineJoinCodeInput = document.getElementById("online-join-code");
+const onlineRoomCodeDisplay = document.getElementById("online-room-code");
+const onlineLobbySlots = document.getElementById("online-lobby-slots");
+const btnOnlineCreate = document.getElementById("btn-online-create");
+const btnOnlineJoinSubmit = document.getElementById("btn-online-join-submit");
+const onlineLobbyErrEl = document.getElementById("online-lobby-err");
+const btnOnlineBackMenu = document.getElementById("btn-online-back-menu");
+const btnOnlineFromMenu = document.getElementById("btn-online-from-menu");
+const btnOnlineLobbyBack = document.getElementById("btn-online-lobby-back");
+const btnOnlineReady = document.getElementById("btn-online-ready");
+const btnOnlineStart = document.getElementById("btn-online-start");
+const btnOnlineCopyCode = document.getElementById("btn-online-copy-code");
 
 const SFX_UI_SRC = "assets/UI.ogg";
 /** @type {HTMLAudioElement[] | null} */
@@ -190,7 +217,19 @@ function showLevelUp(game) {
     }
     btn.append(iconWrap, textCol);
 
+    const uptPick = Math.trunc(game?.upgradePlayerIndex ?? 0);
+    const canPick =
+      game.netMode === "solo" ||
+      (game.netMode === "host" && uptPick === (gOnlineSession?.hostSeat ?? 0)) ||
+      (game.netMode === "client" && uptPick === gOnlineSession?.mySeat);
+    btn.disabled = !canPick;
+
     btn.addEventListener("click", () => {
+      if (gOnlineSession?.role === "client" && uptPick === gOnlineSession.mySeat) {
+        gOnlineSession.socket.emit("game:upgradePick", { upgradeId: u.id });
+        return;
+      }
+      if (gOnlineSession?.role === "host" && uptPick !== (gOnlineSession.hostSeat ?? 0)) return;
       game.applyUpgrade(u);
       refreshOverlays(game);
     });
@@ -400,6 +439,19 @@ async function main() {
   let menuIndex = 0;
   let menuBones = null;
 
+  let started = false;
+  /** When non-null, main menu is hidden and an online overlay is active. */
+  let onlineUiMode = null;
+  let onlineSocket = null;
+  let onlineMySeat = 0;
+  let onlineIsHost = false;
+  let onlineRoomCode = "";
+
+  let game = null;
+  let last = 0;
+  let hintT = 0;
+  let hintDismissed = false;
+
   const syncMenuSelection = () => {
     if (menuItems.length === 0) return;
     menuIndex = ((menuIndex % menuItems.length) + menuItems.length) % menuItems.length;
@@ -498,7 +550,12 @@ async function main() {
   const setScreen = (next) => {
     screen = next;
     if (overlayMenuSettings && screen !== "menu") showOverlay(overlayMenuSettings, false);
-    showOverlay(overlayMenu, screen === "menu");
+    if (screen === "game") {
+      onlineUiMode = null;
+      showOverlay(overlayOnlineMenu, false);
+      showOverlay(overlayOnlineLobby, false);
+    }
+    showOverlay(overlayMenu, screen === "menu" && onlineUiMode == null);
     showOverlay(overlayCharacterSelect, screen === "character_select");
     if (menuFog) {
       const showFog = screen === "menu" || screen === "character_select";
@@ -587,11 +644,21 @@ async function main() {
     syncMenuSelection();
   }
 
-  let started = false;
-  let game = null;
-  let last = 0;
-  let hintT = 0;
-  let hintDismissed = false;
+  window.addEventListener("resize", () => game?.syncCanvasResolution());
+
+  window.addEventListener("keydown", (e) => {
+    if (screen !== "game" || !game) return;
+    if (e.code !== "Escape" || e.repeat) return;
+    if (game.mode === "playing") {
+      e.preventDefault();
+      game.pause();
+      refreshOverlays(game);
+    } else if (game.mode === "paused") {
+      e.preventDefault();
+      game.resume();
+      refreshOverlays(game);
+    }
+  });
   /** @type {string | null} */
   let selectedCharacter = null;
   let localPlayerCount = 1;
@@ -947,70 +1014,31 @@ async function main() {
     applyPortraitPreviewForCurrentMode();
   };
 
-  const DEV_ENEMY_BY_DIGIT = {
-    Digit1: "skeleton",
-    Digit2: "goblin",
-    Digit3: "brute",
-    Digit4: "exploder",
-    Digit5: "slime",
-    Digit6: "slimeSmall",
-    Digit7: "beast",
-    Digit8: "bat",
-    Digit9: "golem",
-    Digit0: "necromancer",
-  };
+  let gameUiBound = false;
 
-  function startGame() {
-    if (started) return;
-    started = true;
-    setScreen("game");
-
-    // Store selected character in a simple variable (for future wiring).
-    window.selectedCharacters = mpCharIndex.map((i) => MP_CHAR_ORDER[i] ?? "mage");
-    window.selectedCharacter = window.selectedCharacters[0] ?? selectedCharacter;
-    window.localPlayerCount = localPlayerCount;
-
-    game = new Game(canvas);
-    window.addEventListener("resize", () => game.syncCanvasResolution());
-
-    function syncObserveButton() {
-      if (!btnObserveEnemies) return;
-      const on = game.devSafeFromEnemies === true;
-      btnObserveEnemies.setAttribute("aria-pressed", on ? "true" : "false");
-      btnObserveEnemies.textContent = on ? "Observe on (no hits)" : "Observe enemies";
-    }
-    syncObserveButton();
-    btnObserveEnemies?.addEventListener("click", () => {
-      game.devSafeFromEnemies = !game.devSafeFromEnemies;
-      syncObserveButton();
-    });
-
-    refreshOverlays(game);
-    syncHud(game);
-
-    last = performance.now() / 1000;
-    hintT = 0;
-    hintDismissed = false;
-    if (hint) {
-      hint.style.display = "";
-      hint.style.opacity = "0.9";
-    }
+  function bindGameUiOnce() {
+    if (gameUiBound) return;
+    gameUiBound = true;
 
     btnRestart.addEventListener("click", () => {
-      resetAudioSettingsToDefaults();
-      refreshAudioSlidersFromStorage();
-      game.reset();
-      syncObserveButton();
-      refreshOverlays(game);
-      syncHud(game);
-      applyMenuMusicState(screen).catch(() => {});
-      applyGameMusicState(screen).catch(() => {});
-      hintT = 0;
-      hintDismissed = false;
-      if (hint) {
-        hint.style.display = "";
-        hint.style.opacity = "0.9";
+      hidePause();
+      hideGameOver();
+      hideLevelUp();
+      try {
+        if (gOnlineSession?.socket) {
+          gOnlineSession.socket.emit("room:leave");
+          gOnlineSession.socket.disconnect();
+        }
+      } catch {
+        //
       }
+      gOnlineSession = null;
+      gPendingClientSnap = null;
+      clearOnlineInputBridge();
+      started = false;
+      game = null;
+      setScreen("menu");
+      refreshAudioSlidersFromStorage();
     });
 
     btnResume.addEventListener("click", () => {
@@ -1022,82 +1050,46 @@ async function main() {
       game.endRun();
       refreshOverlays(game);
     });
+  }
 
-    window.addEventListener("keydown", (e) => {
-      if (!game) return;
-      // Dev: Alt+0 clears weapon override. Alt+1..7 selects a weapon to test solo.
-      // (Disables base attacks + all other weapons; see game.js applyDevWeaponOverride()).
-      if (e.altKey && !e.repeat) {
-        const MAP = {
-          Digit0: "",
-          Digit1: "dagger",
-          Digit2: "throwing_axe",
-          Digit3: "boomerang",
-          Digit4: "lightning",
-          Digit5: "hammer",
-          Digit6: "whip",
-          Digit7: "arcane_runes",
-        };
-        const w = MAP[e.code];
-        if (typeof w === "string") {
-          window.DEV_WEAPON = w;
-          e.preventDefault();
-          return;
-        }
-      }
-      // Dev: [ toggles staff bolts + hammer damage off/on; ] adds one orbiting axe.
-      if (e.code === "BracketLeft" && !e.repeat) {
-        game.devStaffDisabled = !game.devStaffDisabled;
-        e.preventDefault();
-        return;
-      }
-      if (e.code === "BracketRight" && !e.repeat) {
-        game.stats.hammerCount = (game.stats.hammerCount ?? 0) + 1;
-        e.preventDefault();
-        return;
-      }
-      // Dev: Alt+Shift+7 spawns the Fire Demon boss (milestone is marked so it won't double-spawn later).
-      if (e.shiftKey && e.altKey && e.code === "Digit7" && !e.repeat) {
-        game.devSpawnEnemy("boss1", { nearPlayer: false, devBoss: true });
-        e.preventDefault();
-        return;
-      }
-      // Dev: Alt+Shift+8 spawns Arcane Sentinel (Boss2).
-      if (e.shiftKey && e.altKey && e.code === "Digit8" && !e.repeat) {
-        game.devSpawnEnemy("boss2", { nearPlayer: false, devBoss: true });
-        e.preventDefault();
-        return;
-      }
-      // Dev: Shift+0–6,8,9 spawn enemy at spawn ring; add Alt for near-player (~100px).
-      // Exclude Alt combos (Alt+Shift+7/8 are reserved for bosses).
-      if (e.shiftKey && !e.altKey && !e.repeat) {
-        const typeId = DEV_ENEMY_BY_DIGIT[e.code];
-        if (typeId) {
-          game.devSpawnEnemy(typeId, { nearPlayer: e.altKey });
-          e.preventDefault();
-          return;
-        }
-      }
-      if (e.code !== "Escape") return;
-      if (e.repeat) return;
-      if (game.mode === "playing") {
-        e.preventDefault();
-        game.pause();
-        refreshOverlays(game);
-      } else if (game.mode === "paused") {
-        e.preventDefault();
-        game.resume();
-        refreshOverlays(game);
-      }
-    });
-
+  function startGameFrameLoop() {
     function frame(nowMs) {
       if (!game) return;
       const now = nowMs / 1000;
       const dt = Math.min(0.05, now - last);
       last = now;
 
+      if (gPendingClientSnap && game.netMode === "client") {
+        applyGameSnapshot(game, gPendingClientSnap);
+        gPendingClientSnap = null;
+      }
+
       game.update(dt);
+
+      if (gOnlineSession?.role === "host" && game.netMode === "host") {
+        gOnlineSession.snapAcc = (gOnlineSession.snapAcc ?? 0) + dt;
+        if (gOnlineSession.snapAcc >= 0.085) {
+          gOnlineSession.snapAcc = 0;
+          try {
+            gOnlineSession.socket.emit("game:snapshot", buildGameSnapshot(game));
+          } catch {
+            //
+          }
+        }
+      }
+      if (gOnlineSession?.role === "client" && game.netMode === "client") {
+        gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
+        if (gOnlineSession.inputAcc >= 0.04) {
+          gOnlineSession.inputAcc = 0;
+          const m = getMovement(0);
+          try {
+            gOnlineSession.socket.emit("game:input", { ax: m.x, ay: m.y });
+          } catch {
+            //
+          }
+        }
+      }
+
       game.render();
       syncHud(game);
 
@@ -1126,6 +1118,327 @@ async function main() {
 
     requestAnimationFrame(frame);
   }
+
+  function startGame() {
+    if (started) return;
+    started = true;
+    setScreen("game");
+    clearOnlineInputBridge();
+    gOnlineSession = null;
+    gPendingClientSnap = null;
+
+    window.selectedCharacters = mpCharIndex.map((i) => MP_CHAR_ORDER[i] ?? "mage");
+    window.selectedCharacter = window.selectedCharacters[0] ?? selectedCharacter;
+    window.localPlayerCount = localPlayerCount;
+
+    game = new Game(canvas);
+    game.netMode = "solo";
+
+    refreshOverlays(game);
+    syncHud(game);
+
+    last = performance.now() / 1000;
+    hintT = 0;
+    hintDismissed = false;
+    if (hint) {
+      hint.style.display = "";
+      hint.style.opacity = "0.9";
+    }
+
+    bindGameUiOnce();
+    startGameFrameLoop();
+  }
+
+  function startOnlineHostGame(socket, roomCode, roster) {
+    if (started) return;
+    clearOnlineInputBridge();
+    started = true;
+    setScreen("game");
+    gPendingClientSnap = null;
+
+    const sorted = [...roster].sort((a, b) => a.seat - b.seat);
+    window.selectedCharacters = sorted.map((r) => r.characterId);
+    window.selectedCharacter = window.selectedCharacters[0] ?? "mage";
+    window.localPlayerCount = sorted.length;
+
+    game = new Game(canvas);
+    game.netMode = "host";
+    gOnlineSession = { role: "host", socket, roomCode, hostSeat: 0, snapAcc: 0 };
+    setOnlineHostBridge(0);
+
+    socket.off("game:inputRelay");
+    socket.on("game:inputRelay", ({ seat, ax, ay }) => {
+      setHostRemoteMovement(seat, ax, ay);
+    });
+    socket.off("game:upgradePickRelay");
+    socket.on("game:upgradePickRelay", ({ seat, upgradeId }) => {
+      game?.applyUpgradeByRemoteChoice(upgradeId, seat);
+    });
+
+    refreshOverlays(game);
+    syncHud(game);
+
+    last = performance.now() / 1000;
+    hintT = 0;
+    hintDismissed = false;
+    if (hint) {
+      hint.style.display = "";
+      hint.style.opacity = "0.9";
+    }
+
+    bindGameUiOnce();
+    startGameFrameLoop();
+  }
+
+  function startOnlineClientGame(socket, roomCode, mySeat, roster) {
+    if (started) return;
+    clearOnlineInputBridge();
+    started = true;
+    setScreen("game");
+    gPendingClientSnap = null;
+
+    const sorted = [...roster].sort((a, b) => a.seat - b.seat);
+    window.selectedCharacters = sorted.map((r) => r.characterId);
+    window.selectedCharacter = window.selectedCharacters[0] ?? "mage";
+    window.localPlayerCount = sorted.length;
+
+    game = new Game(canvas);
+    game.netMode = "client";
+    setOnlineGuestSeat(mySeat);
+    gOnlineSession = { role: "client", socket, roomCode, mySeat, inputAcc: 0 };
+
+    socket.off("game:snapshot");
+    socket.on("game:snapshot", (snap) => {
+      gPendingClientSnap = snap;
+    });
+
+    refreshOverlays(game);
+    syncHud(game);
+
+    last = performance.now() / 1000;
+    hintT = 0;
+    hintDismissed = false;
+    if (hint) {
+      hint.style.display = "";
+      hint.style.opacity = "0.9";
+    }
+
+    bindGameUiOnce();
+    startGameFrameLoop();
+  }
+
+  let localOnlineReady = false;
+
+  function disconnectOnlineSocket() {
+    try {
+      onlineSocket?.removeAllListeners?.();
+      onlineSocket?.disconnect?.();
+    } catch {
+      //
+    }
+    onlineSocket = null;
+  }
+
+  function leaveOnlineLobbyUi() {
+    onlineUiMode = null;
+    localOnlineReady = false;
+    if (btnOnlineReady) btnOnlineReady.textContent = "Ready";
+    showOverlay(overlayOnlineLobby, false);
+    showOverlay(overlayOnlineMenu, false);
+    disconnectOnlineSocket();
+    // onlineUiMode is already null above; mirror setScreen(menu) visibility.
+    showOverlay(overlayMenu, screen === "menu");
+    if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
+    if (onlineErrEl) onlineErrEl.textContent = "";
+  }
+
+  function showOnlineEntry() {
+    onlineUiMode = "entry";
+    showOverlay(overlayMenu, false);
+    showOverlay(overlayOnlineMenu, true);
+    if (onlineErrEl) onlineErrEl.textContent = "";
+  }
+
+  function renderOnlineLobby(payload) {
+    if (!onlineLobbySlots) return;
+    const code = payload.code ?? onlineRoomCode;
+    onlineRoomCode = code;
+    if (onlineRoomCodeDisplay) onlineRoomCodeDisplay.textContent = code;
+    const players = payload.players ?? [];
+    onlineLobbySlots.innerHTML = "";
+    for (const row of players) {
+      const div = document.createElement("div");
+      div.className = "online-lobby-row";
+      const tag = row.isHost ? " · Host" : "";
+      div.textContent = `P${row.seat + 1} · ${row.characterId}${tag}${row.ready ? " · Ready" : ""}`;
+      onlineLobbySlots.appendChild(div);
+    }
+    const me = players.find((p) => p.socketId === onlineSocket?.id);
+    if (me) {
+      localOnlineReady = !!me.ready;
+      if (btnOnlineReady) btnOnlineReady.textContent = localOnlineReady ? "Unready" : "Ready";
+    }
+    const allR = players.length > 0 && players.every((p) => p.ready);
+    if (btnOnlineStart) {
+      btnOnlineStart.disabled = !onlineIsHost || !allR;
+      btnOnlineStart.style.display = onlineIsHost ? "" : "none";
+    }
+  }
+
+  function attachOnlineSocketHandlers(sock) {
+    sock.off("room:lobby");
+    sock.on("room:lobby", (payload) => {
+      if (onlineUiMode === "lobby") renderOnlineLobby(payload);
+    });
+    sock.off("game:start");
+    sock.on("game:start", ({ roster }) => {
+      showOverlay(overlayOnlineLobby, false);
+      onlineUiMode = null;
+      if (onlineIsHost) startOnlineHostGame(sock, onlineRoomCode, roster);
+      else startOnlineClientGame(sock, onlineRoomCode, onlineMySeat, roster);
+    });
+    sock.off("room:hostDisconnected");
+    sock.on("room:hostDisconnected", () => {
+      if (onlineErrEl) onlineErrEl.textContent = "Host disconnected.";
+      if (started && game) btnRestart?.click();
+      else {
+        // Avoid stuck "started" if we never had a game ref (edge cases / ordering).
+        started = false;
+        leaveOnlineLobbyUi();
+      }
+    });
+  }
+
+  btnOnlineFromMenu?.addEventListener("click", () => {
+    showOnlineEntry();
+  });
+
+  btnOnlineBackMenu?.addEventListener("click", () => {
+    leaveOnlineLobbyUi();
+  });
+
+  btnOnlineLobbyBack?.addEventListener("click", () => {
+    if (onlineSocket) onlineSocket.emit("room:leave");
+    leaveOnlineLobbyUi();
+  });
+
+  btnOnlineCreate?.addEventListener("click", () => {
+    const base = resolveMultiplayerServerUrl();
+    if (!base) {
+      if (onlineErrEl)
+        onlineErrEl.textContent =
+          "Set window.MULTIPLAYER_SERVER_URL, ?server=…, or use http://localhost (dev default port 8787 — run npm run online-server).";
+      return;
+    }
+    if (typeof globalThis.io !== "function") {
+      if (onlineErrEl) onlineErrEl.textContent = "Socket.IO script failed to load.";
+      return;
+    }
+    disconnectOnlineSocket();
+    onlineSocket = globalThis.io(base, {
+      // Polling first avoids noisy WebSocket errors in DevTools when WS is blocked; still upgrades later.
+      transports: ["polling", "websocket"],
+    });
+    onlineSocket.once("connect_error", (err) => {
+      if (onlineErrEl)
+        onlineErrEl.textContent =
+          `Cannot reach room server (${base}). In a second terminal run: npm run online-server — then open ${base}/health in your browser`;
+      console.warn("[online]", err?.message ?? err);
+    });
+    onlineSocket.once("connect", () => {
+      attachOnlineSocketHandlers(onlineSocket);
+      onlineSocket.emit("room:create", (res) => {
+        if (!res?.ok) {
+          if (onlineErrEl) onlineErrEl.textContent = res?.error || "Could not create room.";
+          return;
+        }
+        onlineRoomCode = res.code;
+        onlineIsHost = true;
+        onlineMySeat = 0;
+        localOnlineReady = false;
+        onlineUiMode = "lobby";
+        showOverlay(overlayOnlineMenu, false);
+        showOverlay(overlayOnlineLobby, true);
+        if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
+        renderOnlineLobby(res);
+      });
+    });
+  });
+
+  btnOnlineJoinSubmit?.addEventListener("click", () => {
+    const base = resolveMultiplayerServerUrl();
+    const raw = (onlineJoinCodeInput?.value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!base) {
+      if (onlineErrEl)
+        onlineErrEl.textContent =
+          "Set window.MULTIPLAYER_SERVER_URL, ?server=…, or open the game over http on localhost/LAN for the dev server (port 8787).";
+      return;
+    }
+    if (!raw) {
+      if (onlineErrEl) onlineErrEl.textContent = "Enter a room code.";
+      return;
+    }
+    if (typeof globalThis.io !== "function") {
+      if (onlineErrEl) onlineErrEl.textContent = "Socket.IO script failed to load.";
+      return;
+    }
+    disconnectOnlineSocket();
+    onlineSocket = globalThis.io(base, {
+      transports: ["polling", "websocket"],
+    });
+    onlineSocket.once("connect_error", (err) => {
+      if (onlineErrEl)
+        onlineErrEl.textContent =
+          `Cannot reach room server (${base}). In a second terminal run: npm run online-server — then open ${base}/health in your browser`;
+      console.warn("[online]", err?.message ?? err);
+    });
+    onlineSocket.once("connect", () => {
+      attachOnlineSocketHandlers(onlineSocket);
+      onlineSocket.emit("room:join", { code: raw }, (res) => {
+        if (!res?.ok) {
+          if (onlineErrEl) onlineErrEl.textContent = res?.error || "Could not join.";
+          return;
+        }
+        onlineRoomCode = res.code;
+        onlineIsHost = false;
+        onlineMySeat = Number.isFinite(res.yourSeat) ? res.yourSeat : 0;
+        localOnlineReady = false;
+        onlineUiMode = "lobby";
+        showOverlay(overlayOnlineMenu, false);
+        showOverlay(overlayOnlineLobby, true);
+        if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
+        renderOnlineLobby(res);
+      });
+    });
+  });
+
+  document.querySelectorAll(".online-char-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-online-char");
+      if (id) onlineSocket?.emit("lobby:setCharacter", { characterId: id });
+    });
+  });
+
+  btnOnlineReady?.addEventListener("click", () => {
+    localOnlineReady = !localOnlineReady;
+    onlineSocket?.emit("lobby:setReady", { ready: localOnlineReady });
+    if (btnOnlineReady) btnOnlineReady.textContent = localOnlineReady ? "Unready" : "Ready";
+  });
+
+  btnOnlineStart?.addEventListener("click", () => {
+    onlineSocket?.emit("room:start", {}, (res) => {
+      if (!res?.ok && onlineLobbyErrEl) onlineLobbyErrEl.textContent = res?.error || "Cannot start.";
+    });
+  });
+
+  btnOnlineCopyCode?.addEventListener("click", async () => {
+    const t = onlineRoomCode || "";
+    try {
+      await navigator.clipboard.writeText(t);
+    } catch {
+      if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "Copy failed — select and copy manually.";
+    }
+  });
 
   btnStartGame?.addEventListener("click", () => {
     characterSelectBrowseOnly = false;
@@ -1156,6 +1469,7 @@ async function main() {
   // Keyboard menu navigation: Up/Down (or W/S) + Enter/Space.
   window.addEventListener("keydown", (e) => {
     if (screen !== "menu") return;
+    if (onlineUiMode) return;
     if (
       overlayMenuSettings &&
       !overlayMenuSettings.classList.contains("hidden")
