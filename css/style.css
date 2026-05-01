@@ -2364,7 +2364,19 @@ html.is-touch-game-chrome #overlay-character-select .character-mp-controls {
 
 /* -------------------------
    Mobile: virtual stick + FABs (gameplay only)
+   — `html.is-touch-game-chrome` is synced in mobileControls.js (`prefersMobileGameChrome`).
    ------------------------- */
+html:not(.is-touch-game-chrome) #mobile-game-controls {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Same as overlays: `.hidden` must collapse layout (menus / PC / inactive run). */
+#mobile-game-controls.hidden {
+  display: none !important;
+}
+
 .mobile-game-controls {
   position: fixed;
   inset: 0;
