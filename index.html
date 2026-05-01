@@ -2,10 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+  />
   <title>Shadow Arena — Survival</title>
   <link rel="icon" type="image/png" href="favicon.ico" />
-  <link rel="stylesheet" href="css/style.css?v=2026-04-30-portal-webring" />
+  <link rel="stylesheet" href="css/style.css?v=2026-04-30-mobile-controls" />
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script>
     // Room server on Railway — full https origin, no trailing slash. Leave empty on localhost so dev uses 127.0.0.1:8787.
@@ -305,6 +308,18 @@
       </div>
     </div>
     <canvas id="game" width="960" height="540" aria-label="Game canvas"></canvas>
+    <div id="mobile-game-controls" class="mobile-game-controls hidden" aria-hidden="true">
+      <div id="mobile-stick" class="mobile-stick">
+        <div class="mobile-stick-base" aria-hidden="true"></div>
+        <div id="mobile-stick-knob" class="mobile-stick-knob" aria-hidden="true"></div>
+      </div>
+      <button type="button" id="mobile-btn-pause" class="mobile-fab mobile-fab-pause" aria-label="Pause">
+        ⏸
+      </button>
+      <button type="button" id="mobile-btn-interact" class="mobile-fab mobile-fab-interact" aria-label="Hold to interact">
+        ✋
+      </button>
+    </div>
     <div id="overlay-levelup" class="overlay hidden" aria-hidden="true">
       <div class="panel">
         <h2>Level Up</h2>
@@ -360,6 +375,6 @@
     <div id="hint" class="hint">WASD move · Esc pause</div>
   </div>
     <script async src="https://vibejam.cc/2026/widget.js"></script>
-    <script type="module" src="js/main.js?v=2026-04-30-portal-webring"></script>
+    <script type="module" src="js/main.js?v=2026-04-30-mobile-controls"></script>
 </body>
 </html>

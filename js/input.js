@@ -1,5 +1,11 @@
 const keys = new Set();
 
+/** Normalized analog from virtual stick (merged with keyboard for the local seat only). */
+let virtualStickX = 0;
+let virtualStickY = 0;
+/** Held for portal / interact on mobile. */
+let mobileInteractDown = false;
+
 /** @type {number | null} — guest client: only this seat reads WASD. */
 let onlineGuestSeat = null;
 
@@ -24,6 +30,18 @@ export function clearOnlineInputBridge() {
     hostRemoteAxes[i].x = 0;
     hostRemoteAxes[i].y = 0;
   }
+  virtualStickX = 0;
+  virtualStickY = 0;
+  mobileInteractDown = false;
+}
+
+export function setVirtualStick(x, y) {
+  virtualStickX = Number.isFinite(x) ? x : 0;
+  virtualStickY = Number.isFinite(y) ? y : 0;
+}
+
+export function setMobileInteractPressed(down) {
+  mobileInteractDown = !!down;
 }
 
 /** @param {number | null} localSeat Host's own seat (uses keyboard map for that seat). */
@@ -47,7 +65,30 @@ export function setupInput() {
   window.addEventListener("keyup", (e) => {
     keys.delete(e.code);
   });
-  window.addEventListener("blur", () => keys.clear());
+  window.addEventListener("blur", () => {
+    keys.clear();
+    virtualStickX = 0;
+    virtualStickY = 0;
+    mobileInteractDown = false;
+  });
+}
+
+function isLocalDirectMovementSeat(playerIndex) {
+  const i = Math.max(0, Math.min(3, Math.floor(playerIndex ?? 0)));
+  if (onlineGuestSeat != null) return i === onlineGuestSeat;
+  if (onlineHostLocalSeat != null) return i === onlineHostLocalSeat;
+  return i === 0;
+}
+
+function mergeMovementDir(kx, ky, playerIndex) {
+  if (!isLocalDirectMovementSeat(playerIndex)) return { x: kx, y: ky };
+  const sx = virtualStickX;
+  const sy = virtualStickY;
+  const cx = kx + sx;
+  const cy = ky + sy;
+  const len = Math.hypot(cx, cy);
+  if (len < 1e-5) return { x: 0, y: 0 };
+  return { x: cx / len, y: cy / len };
 }
 
 function movementFromKeyMap(map) {
@@ -80,6 +121,7 @@ const INTERACT_CODES = ["KeyE", "Comma", "Semicolon", "Quote"];
 
 export function interactHeldForSeat(playerIndex = 0) {
   const i = Math.max(0, Math.min(3, Math.floor(playerIndex ?? 0)));
+  if (isLocalDirectMovementSeat(i) && mobileInteractDown) return true;
   return keys.has(INTERACT_CODES[i] ?? "KeyE");
 }
 
@@ -94,16 +136,21 @@ export function getMovement(playerIndex = 0) {
 
   if (onlineGuestSeat != null) {
     if (i !== onlineGuestSeat) return { x: 0, y: 0 };
-    return movementFromKeyMap(keyMapForSeat(0));
+    const k = movementFromKeyMap(keyMapForSeat(0));
+    return mergeMovementDir(k.x, k.y, i);
   }
 
   if (onlineHostLocalSeat != null) {
-    if (i === onlineHostLocalSeat) return movementFromKeyMap(keyMapForSeat(i));
+    if (i === onlineHostLocalSeat) {
+      const k = movementFromKeyMap(keyMapForSeat(i));
+      return mergeMovementDir(k.x, k.y, i);
+    }
     const r = hostRemoteAxes[i];
     const len = Math.hypot(r.x, r.y);
     if (len > 1e-6) return { x: r.x / len, y: r.y / len };
     return { x: 0, y: 0 };
   }
 
-  return movementFromKeyMap(keyMapForSeat(i));
+  const k = movementFromKeyMap(keyMapForSeat(i));
+  return mergeMovementDir(k.x, k.y, i);
 }

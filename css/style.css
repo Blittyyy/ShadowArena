@@ -2130,3 +2130,98 @@ html, body {
   background: linear-gradient(90deg, #63c4ff 0%, #c47cff 55%, #8866ff 100%);
   transition: width 45ms linear;
 }
+
+/* -------------------------
+   Mobile: virtual stick + FABs (gameplay only)
+   ------------------------- */
+.mobile-game-controls {
+  position: fixed;
+  inset: 0;
+  z-index: 26;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.mobile-game-controls.is-active {
+  pointer-events: none;
+}
+
+.mobile-stick,
+.mobile-fab {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-stick {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  width: 132px;
+  height: 132px;
+}
+
+.mobile-stick-base {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(120, 90, 200, 0.35), rgba(20, 12, 40, 0.72));
+  border: 2px solid rgba(200, 170, 255, 0.35);
+  box-shadow:
+    0 0 24px rgba(120, 80, 220, 0.25),
+    inset 0 0 20px rgba(0, 0, 0, 0.45);
+}
+
+.mobile-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 30% 25%, #e8deff, #7a56c4 55%, #3a2060);
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.mobile-fab {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgba(28, 18, 48, 0.88);
+  color: #f0e8ff;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.mobile-fab:active {
+  transform: scale(0.96);
+}
+
+.mobile-fab-pause {
+  right: max(16px, env(safe-area-inset-right));
+  top: max(72px, calc(env(safe-area-inset-top) + 56px));
+}
+
+.mobile-fab-interact {
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(88px, calc(env(safe-area-inset-bottom) + 100px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.mobile-fab-interact.is-portal-visible {
+  opacity: 1;
+  pointer-events: auto;
+}

@@ -4550,7 +4550,12 @@ export class Game {
     const ctx = this.ctx;
     const rect = canvas.getBoundingClientRect();
     const raw = window.devicePixelRatio || 1;
-    const cap = CONFIG.CANVAS_MAX_DPR ?? 2;
+    let cap = CONFIG.CANVAS_MAX_DPR ?? 2;
+    try {
+      if (window.matchMedia("(pointer: coarse)").matches) cap = Math.min(cap, 2);
+    } catch {
+      //
+    }
     const dpr = Math.min(cap, Math.max(1, raw));
     const rw = Math.max(rect.width || CONFIG.CANVAS_W, 2);
     const rh = Math.max(rect.height || CONFIG.CANVAS_H, 2);

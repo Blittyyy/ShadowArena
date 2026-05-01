@@ -25,6 +25,7 @@ import {
   ingestJamInboundUrl,
   loadForwardBagFromStorage,
 } from "./net/vibeJamPortal.js?v=2026-04-30-portal-webring-1";
+import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-mobile-1";
 
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
@@ -777,6 +778,15 @@ async function main() {
       refreshOverlays(game);
     }
   });
+
+  initMobileGameControls({
+    getRuntime: () => ({ screen, game }),
+    isPortalHudActive: () => !!game?.jamPortalHud?.active,
+    onPauseStateChange: (g) => {
+      refreshOverlays(g);
+    },
+  });
+
   /** @type {string | null} */
   let selectedCharacter = null;
   let localPlayerCount = 1;
