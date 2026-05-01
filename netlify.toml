@@ -1,0 +1,14 @@
+# Static site — ES modules load three from ./node_modules (installed at build time).
+
+[build]
+  command = "npm ci --omit=dev"
+  publish = "."
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Optional: immutable cache for versioned deps (CDN-like)
+[[headers]]
+  for = "/node_modules/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

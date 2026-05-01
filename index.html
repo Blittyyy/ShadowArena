@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shadow Arena — Survival</title>
+  <link rel="icon" type="image/png" href="favicon.ico" />
+  <link rel="stylesheet" href="css/style.css?v=2026-04-30-audio-volume-sliders-1" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game-root">
+    <!-- Menu atmosphere layers (above background, below UI) -->
+    <div id="menu-fog" aria-hidden="true">
+      <!-- Rising background particles (behind fog) -->
+      <div class="particles particles-back" aria-hidden="true"></div>
+
+      <!-- Layered fog (above background, below UI) -->
+      <div class="fog fog-back" aria-hidden="true"></div>
+      <div class="fog fog-mid" aria-hidden="true"></div>
+      <div class="fog fog-front" aria-hidden="true"></div>
+
+      <!-- Sparse arcane particles (above fog, below UI) -->
+      <div class="particles" aria-hidden="true"></div>
+
+      <!-- Rune circle pulse near arena floor -->
+      <div class="rune-circle" aria-hidden="true"></div>
+
+      <!-- Moon shimmer (fake light through clouds) -->
+      <div class="moon-glow" aria-hidden="true"></div>
+
+      <!-- Warm torch flickers (orange flames on the far sides) -->
+      <div class="torch-glow torch-left" aria-hidden="true"></div>
+      <div class="torch-glow torch-right" aria-hidden="true"></div>
+
+      <!-- Subtle flame flicker glows near pillars -->
+      <div class="flame-glow flame-left" aria-hidden="true"></div>
+      <div class="flame-glow flame-right" aria-hidden="true"></div>
+      <div class="flame-glow flame-left-2" aria-hidden="true"></div>
+      <div class="flame-glow flame-right-2" aria-hidden="true"></div>
+
+      <!-- Gentle title aura (doesn't change baked title art) -->
+      <div class="title-aura" aria-hidden="true"></div>
+    </div>
+    <div id="overlay-menu" class="overlay" aria-hidden="false">
+      <canvas id="menu-bones-canvas" class="menu-bones-canvas" aria-hidden="true"></canvas>
+      <div class="menu-shell" role="dialog" aria-label="Main menu">
+        <div class="menu-actions">
+          <div class="menu-item selected" data-menu-item="start">
+            <button type="button" id="btn-start-game" class="menu-btn">Start</button>
+          </div>
+          <div class="menu-item" data-menu-item="characters">
+            <button type="button" id="btn-characters" class="menu-btn">Characters</button>
+          </div>
+          <div class="menu-item" data-menu-item="settings">
+            <button type="button" id="btn-menu-settings" class="menu-btn">Settings</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="overlay-menu-settings" class="overlay hidden" aria-hidden="true">
+      <div class="panel">
+        <h2>Settings</h2>
+        <p class="sub">Audio</p>
+        <div class="pause-settings" role="group" aria-label="Audio">
+          <div class="pause-slider-row">
+            <div class="pause-slider-head">
+              <label for="menu-slider-music">Music</label>
+              <span id="menu-val-music" class="pause-val">100%</span>
+            </div>
+            <input type="range" id="menu-slider-music" min="0" max="100" value="100" step="1" />
+          </div>
+          <div class="pause-slider-row">
+            <div class="pause-slider-head">
+              <label for="menu-slider-sfx">Sound effects</label>
+              <span id="menu-val-sfx" class="pause-val">100%</span>
+            </div>
+            <input type="range" id="menu-slider-sfx" min="0" max="100" value="100" step="1" />
+          </div>
+        </div>
+        <div class="pause-actions menu-settings-actions">
+          <button type="button" id="btn-menu-settings-close" class="btn-secondary">Back</button>
+        </div>
+      </div>
+    </div>
+    <div id="overlay-character-select" class="overlay hidden" aria-hidden="true">
+      <div class="character-select-shell">
+        <div class="character-select-vignette" aria-hidden="true"></div>
+        <div id="character-select-header-pick" class="character-select-header">
+          <h2>Choose Your Champion</h2>
+          <p class="sub">Select your starting class</p>
+        </div>
+        <div id="character-select-header-browse" class="character-select-header hidden" aria-hidden="true">
+          <h2>Champion codex</h2>
+          <p class="sub">Browse each class—stats, weapons, and passives. Use Start on the title menu when you’re ready to play.</p>
+        </div>
+
+        <div id="mp-player-slots" class="mp-player-slots" aria-label="Player slots"></div>
+
+        <div class="character-mp-controls" aria-label="Local multiplayer">
+          <div class="mp-row">
+            <span class="mp-label">Players</span>
+            <div class="mp-seg" role="group" aria-label="Player count">
+              <button type="button" class="mp-seg-btn is-selected" data-player-count="1">1</button>
+              <button type="button" class="mp-seg-btn" data-player-count="2">2</button>
+              <button type="button" class="mp-seg-btn" data-player-count="3">3</button>
+              <button type="button" class="mp-seg-btn" data-player-count="4">4</button>
+            </div>
+          </div>
+          <div class="mp-hint">Local co-op: P1 WASD, P2 Arrows, P3 IJKL, P4 TFGH</div>
+        </div>
+
+        <div id="character-grid" class="character-grid character-grid-premium" role="list">
+          <button type="button" class="character-card character-card-premium" role="listitem" data-character="mage">
+            <div class="cc-selected-tag" aria-hidden="true">Selected</div>
+            <div class="cc-sprite" aria-hidden="true">
+              <img class="cc-portrait-img" data-portrait="mage" alt="Mage" />
+            </div>
+            <div class="cc-name">Mage</div>
+            <div class="cc-role">Arcane Control</div>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <div class="cc-bullets">
+              <div class="cc-bullet"><span class="k">Starting Weapon</span><span class="v">Magic Staff</span></div>
+              <div class="cc-bullet"><span class="k">Passive</span><span class="v">Area scaling</span></div>
+              <div class="cc-bullet"><span class="k">Class Weapon</span><span class="v">Arcane Runes</span></div>
+            </div>
+            <div class="cc-stats" aria-label="Stats: HP, Speed, Damage">
+              <div class="cc-stat"><div class="lbl">HP</div><div class="bar hp"><span style="width:70%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Speed</div><div class="bar spd"><span style="width:78%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Damage</div><div class="bar dmg"><span style="width:68%"></span></div></div>
+            </div>
+          </button>
+
+          <button type="button" class="character-card character-card-premium" role="listitem" data-character="revenant">
+            <div class="cc-selected-tag" aria-hidden="true">Selected</div>
+            <div class="cc-sprite" aria-hidden="true">
+              <img class="cc-portrait-img" data-portrait="revenant" alt="Revenant" />
+            </div>
+            <div class="cc-name">Revenant</div>
+            <div class="cc-role">Soul Drainer</div>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <div class="cc-bullets">
+              <div class="cc-bullet"><span class="k">Starting Weapon</span><span class="v">Soul Projectile</span></div>
+              <div class="cc-bullet"><span class="k">Passive</span><span class="v">Soul Rip lifesteal on kills</span></div>
+              <div class="cc-bullet"><span class="k">Class Weapon</span><span class="v">Soul Push</span></div>
+            </div>
+            <div class="cc-stats" aria-label="Stats: HP, Speed, Damage">
+              <div class="cc-stat"><div class="lbl">HP</div><div class="bar hp"><span style="width:74%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Speed</div><div class="bar spd"><span style="width:74%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Damage</div><div class="bar dmg"><span style="width:74%"></span></div></div>
+            </div>
+          </button>
+
+          <button type="button" class="character-card character-card-premium" role="listitem" data-character="berserker">
+            <div class="cc-selected-tag" aria-hidden="true">Selected</div>
+            <div class="cc-sprite" aria-hidden="true">
+              <img class="cc-portrait-img" data-portrait="berserker" alt="Berserker" />
+            </div>
+            <div class="cc-name">Berserker</div>
+            <div class="cc-role">Heavy Bruiser</div>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <div class="cc-bullets">
+              <div class="cc-bullet"><span class="k">Starting Weapon</span><span class="v">Heavy Cleave</span></div>
+              <div class="cc-bullet"><span class="k">Passive</span><span class="v">Blood Rage</span></div>
+              <div class="cc-bullet"><span class="k">Class Weapon</span><span class="v">Ground Slam</span></div>
+            </div>
+            <div class="cc-stats" aria-label="Stats: HP, Speed, Damage">
+              <div class="cc-stat"><div class="lbl">HP</div><div class="bar hp"><span style="width:92%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Speed</div><div class="bar spd"><span style="width:62%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Damage</div><div class="bar dmg"><span style="width:88%"></span></div></div>
+            </div>
+          </button>
+
+          <button type="button" class="character-card character-card-premium" role="listitem" data-character="archer">
+            <div class="cc-selected-tag" aria-hidden="true">Selected</div>
+            <div class="cc-sprite" aria-hidden="true">
+              <img class="cc-portrait-img" data-portrait="archer" alt="Verdant Ranger" />
+            </div>
+            <div class="cc-name">Verdant Ranger</div>
+            <div class="cc-role">Precision Hunter</div>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <div class="cc-bullets">
+              <div class="cc-bullet"><span class="k">Starting Weapon</span><span class="v">Arrow</span></div>
+              <div class="cc-bullet"><span class="k">Passive</span><span class="v">Poison on hit</span></div>
+              <div class="cc-bullet"><span class="k">Class Weapon</span><span class="v">Toxic Grenade</span></div>
+            </div>
+            <div class="cc-stats" aria-label="Stats: HP, Speed, Damage">
+              <div class="cc-stat"><div class="lbl">HP</div><div class="bar hp"><span style="width:64%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Speed</div><div class="bar spd"><span style="width:86%"></span></div></div>
+              <div class="cc-stat"><div class="lbl">Damage</div><div class="bar dmg"><span style="width:62%"></span></div></div>
+            </div>
+          </button>
+        </div>
+
+        <div class="character-actions character-actions-premium">
+          <button type="button" id="btn-character-confirm" class="btn-confirm-premium" disabled>Confirm</button>
+          <button type="button" id="btn-character-back" class="btn-back-premium btn-secondary">Back</button>
+        </div>
+      </div>
+    </div>
+    <div id="hud-top" class="hud-top" aria-hidden="false">
+      <div class="vs-xp">
+        <div class="vs-xp-track" aria-hidden="true">
+          <div id="xp-fill" class="vs-xp-fill"></div>
+        </div>
+      </div>
+      <div class="vs-top-meta">
+        <span id="time-display" class="vs-time">0:00</span>
+        <span id="level-display" class="vs-level">Lv 1</span>
+        <button
+          type="button"
+          id="btn-observe-enemies"
+          class="btn-observe"
+          aria-pressed="false"
+          title="Ignore enemy contact damage and exploder hits (enemies are not cleared on touch)"
+        >
+          Observe enemies
+        </button>
+      </div>
+    </div>
+    <canvas id="game" width="960" height="540" aria-label="Game canvas"></canvas>
+    <div id="overlay-levelup" class="overlay hidden" aria-hidden="true">
+      <div class="panel">
+        <h2>Level Up</h2>
+        <p class="sub">Choose an upgrade</p>
+        <div id="upgrade-choices" class="upgrade-grid"></div>
+      </div>
+    </div>
+    <div id="overlay-pause" class="overlay hidden" aria-hidden="true">
+      <div class="panel">
+        <h2>Paused</h2>
+        <p class="sub">Esc to resume</p>
+        <div class="pause-settings" role="group" aria-label="Audio">
+          <div class="pause-slider-row">
+            <div class="pause-slider-head">
+              <label for="pause-slider-music">Music</label>
+              <span id="pause-val-music" class="pause-val">100%</span>
+            </div>
+            <input type="range" id="pause-slider-music" min="0" max="100" value="100" step="1" />
+          </div>
+          <div class="pause-slider-row">
+            <div class="pause-slider-head">
+              <label for="pause-slider-sfx">Sound effects</label>
+              <span id="pause-val-sfx" class="pause-val">100%</span>
+            </div>
+            <input type="range" id="pause-slider-sfx" min="0" max="100" value="100" step="1" />
+          </div>
+        </div>
+        <div class="pause-actions">
+          <button type="button" id="btn-resume" class="btn-secondary">Resume</button>
+          <button type="button" id="btn-end-run" class="btn-danger">End run</button>
+        </div>
+      </div>
+    </div>
+    <div id="overlay-gameover" class="overlay hidden" aria-hidden="true">
+      <div class="panel">
+        <h2 id="go-title">Fallen</h2>
+        <p id="go-time">You survived 0:00</p>
+        <p id="go-level" class="sub">Reached level 1</p>
+        <button type="button" id="btn-restart">Play Again</button>
+      </div>
+    </div>
+    <div id="hint" class="hint">WASD move · Esc pause · Dev: Shift+1–6 spawn (Alt=near) · Alt+Shift+7 boss</div>
+  </div>
+    <script async src="https://vibejam.cc/2026/widget.js"></script>
+    <script type="module" src="js/main.js?v=2026-04-30-arcane-sentinel"></script>
+</body>
+</html>
