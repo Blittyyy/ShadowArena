@@ -35,6 +35,29 @@ function reviveSetsInObject(obj) {
   }
 }
 
+/** Socket payloads are already plain JSON — skip stringify/parse; only revive `__set` markers. */
+function takeSnapArray(arr) {
+  const a = Array.isArray(arr) ? arr : [];
+  reviveSetsInObject(a);
+  return a;
+}
+
+/**
+ * Snapshot old positions/camera before applying a net snapshot (client smoothes renders between ticks).
+ * @param {import("../game.js").Game} game
+ */
+export function captureClientNetInterpAnchors(game) {
+  game._interpPrevPlayers = (game.players ?? []).map((p) =>
+    p ? { x: p.x, y: p.y } : { x: 0, y: 0 }
+  );
+  game._interpPrevEnemies = (game.enemies ?? []).map((e) =>
+    e ? { x: e.x, y: e.y } : { x: 0, y: 0 }
+  );
+  game._interpPrevCamX = game.camX;
+  game._interpPrevCamY = game.camY;
+  game._interpT0 = performance.now();
+}
+
 function snapPlayer(p) {
   if (!p) return null;
   const stats = safeJson(p.stats);
@@ -176,6 +199,7 @@ export function buildGameSnapshot(game) {
  */
 export function applyGameSnapshot(game, snap) {
   if (!snap || snap.v !== 1) return;
+  if (game.netMode === "client") captureClientNetInterpAnchors(game);
   game.time = snap.t ?? game.time;
   game.mode = snap.mode ?? game.mode;
   game.level = snap.level ?? game.level;
@@ -211,35 +235,24 @@ export function applyGameSnapshot(game, snap) {
     game.stats = game.player.stats;
   }
 
-  game.enemies = safeJson(snap.enemies) ?? [];
-  reviveSetsInObject(game.enemies);
-  game.projectiles = safeJson(snap.projectiles) ?? [];
-  reviveSetsInObject(game.projectiles);
-  game.bossArcaneProjs = safeJson(snap.bossArcaneProjs) ?? [];
-  reviveSetsInObject(game.bossArcaneProjs);
-  game.bossPulses = safeJson(snap.bossPulses) ?? [];
-  reviveSetsInObject(game.bossPulses);
-  game.xpOrbs = safeJson(snap.xpOrbs) ?? [];
-  game.pickups = safeJson(snap.pickups) ?? [];
-  game.daggers = safeJson(snap.daggers) ?? [];
-  reviveSetsInObject(game.daggers);
-  game.throwingAxes = safeJson(snap.throwingAxes) ?? [];
-  reviveSetsInObject(game.throwingAxes);
-  game.boomerangs = safeJson(snap.boomerangs) ?? [];
-  reviveSetsInObject(game.boomerangs);
-  game.lightningStrikes = safeJson(snap.lightningStrikes) ?? [];
-  game.hammers = safeJson(snap.hammers) ?? [];
-  reviveSetsInObject(game.hammers);
-  game.arcaneRunes = safeJson(snap.arcaneRunes) ?? [];
-  reviveSetsInObject(game.arcaneRunes);
-  game.toxicGrenades = safeJson(snap.toxicGrenades) ?? [];
-  game.toxicExplosions = safeJson(snap.toxicExplosions) ?? [];
-  game.toxicClouds = safeJson(snap.toxicClouds) ?? [];
-  game.groundSlams = safeJson(snap.groundSlams) ?? [];
-  game.soulRipProjectiles = safeJson(snap.soulRipProjectiles) ?? [];
-  reviveSetsInObject(game.soulRipProjectiles);
-  game.slashes = safeJson(snap.slashes) ?? [];
-  reviveSetsInObject(game.slashes);
+  game.enemies = takeSnapArray(snap.enemies);
+  game.projectiles = takeSnapArray(snap.projectiles);
+  game.bossArcaneProjs = takeSnapArray(snap.bossArcaneProjs);
+  game.bossPulses = takeSnapArray(snap.bossPulses);
+  game.xpOrbs = takeSnapArray(snap.xpOrbs);
+  game.pickups = takeSnapArray(snap.pickups);
+  game.daggers = takeSnapArray(snap.daggers);
+  game.throwingAxes = takeSnapArray(snap.throwingAxes);
+  game.boomerangs = takeSnapArray(snap.boomerangs);
+  game.lightningStrikes = takeSnapArray(snap.lightningStrikes);
+  game.hammers = takeSnapArray(snap.hammers);
+  game.arcaneRunes = takeSnapArray(snap.arcaneRunes);
+  game.toxicGrenades = takeSnapArray(snap.toxicGrenades);
+  game.toxicExplosions = takeSnapArray(snap.toxicExplosions);
+  game.toxicClouds = takeSnapArray(snap.toxicClouds);
+  game.groundSlams = takeSnapArray(snap.groundSlams);
+  game.soulRipProjectiles = takeSnapArray(snap.soulRipProjectiles);
+  game.slashes = takeSnapArray(snap.slashes);
   if (snap.bossMilestones && typeof snap.bossMilestones === "object") {
     game.bossMilestones = { ...game.bossMilestones, ...snap.bossMilestones };
   }

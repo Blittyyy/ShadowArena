@@ -6,10 +6,10 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-coop-vs-balance-1";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-client-smooth-1";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-04-30-coop-vs-balance-1";
+import { Game } from "./game.js?v=2026-04-30-client-smooth-1";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -1147,7 +1147,7 @@ async function main() {
 
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
         gOnlineSession.snapAcc = (gOnlineSession.snapAcc ?? 0) + dt;
-        if (gOnlineSession.snapAcc >= 0.085) {
+        if (gOnlineSession.snapAcc >= 0.05) {
           gOnlineSession.snapAcc = 0;
           try {
             gOnlineSession.socket.emit("game:snapshot", buildGameSnapshot(game));

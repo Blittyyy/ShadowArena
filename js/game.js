@@ -4393,6 +4393,82 @@ export class Game {
     }
   }
 
+  /**
+   * Online client only: lerps draw positions between host snapshots (~20 Hz) toward 60 fps motion.
+   * Returns a cleanup that restores authoritative coordinates (caller must invoke after drawWorld).
+   * @returns {(() => void) | null}
+   */
+  netClientBeginDrawBlend() {
+    if (this.netMode !== "client") return null;
+    if (this.mode === "paused" || this.mode === "gameOver") return null;
+
+    const prevP = this._interpPrevPlayers;
+    if (!prevP || prevP.length === 0) return null;
+
+    const t0 = this._interpT0 ?? performance.now();
+    /** Slightly shorter than snapshot period so blends finish before most ticks (host ~50ms). */
+    const blendMs = 45;
+    const u = blendMs > 1e-6 ? Math.min(1, Math.max(0, (performance.now() - t0) / blendMs)) : 1;
+    const a = u * u * (3 - 2 * u);
+
+    const players = this.players ?? [];
+    const enemies = this.enemies ?? [];
+
+    const auth = {
+      players: players.map((p) => (p ? { x: p.x, y: p.y } : null)),
+      enemies: enemies.map((e) => (e ? { x: e.x, y: e.y } : null)),
+      camX: this.camX,
+      camY: this.camY,
+    };
+
+    const np = Math.min(prevP.length, players.length);
+    for (let i = 0; i < np; i++) {
+      const p = players[i];
+      const pr = prevP[i];
+      if (!p || !pr) continue;
+      p.x = pr.x + (p.x - pr.x) * a;
+      p.y = pr.y + (p.y - pr.y) * a;
+    }
+
+    const prevE = this._interpPrevEnemies ?? [];
+    const ne = Math.min(prevE.length, enemies.length);
+    for (let i = 0; i < ne; i++) {
+      const e = enemies[i];
+      const er = prevE[i];
+      if (!e || !er) continue;
+      e.x = er.x + (e.x - er.x) * a;
+      e.y = er.y + (e.y - er.y) * a;
+    }
+
+    const pcx = this._interpPrevCamX;
+    const pcy = this._interpPrevCamY;
+    if (Number.isFinite(pcx) && Number.isFinite(pcy)) {
+      this.camX = pcx + (auth.camX - pcx) * a;
+      this.camY = pcy + (auth.camY - pcy) * a;
+    }
+
+    return () => {
+      for (let i = 0; i < auth.players.length; i++) {
+        const p = players[i];
+        const g = auth.players[i];
+        if (p && g) {
+          p.x = g.x;
+          p.y = g.y;
+        }
+      }
+      for (let i = 0; i < auth.enemies.length; i++) {
+        const e = enemies[i];
+        const g = auth.enemies[i];
+        if (e && g) {
+          e.x = g.x;
+          e.y = g.y;
+        }
+      }
+      this.camX = auth.camX;
+      this.camY = auth.camY;
+    };
+  }
+
   render() {
     this.syncCanvasResolution();
     const ctx = this.ctx;
@@ -4403,7 +4479,12 @@ export class Game {
     ctx.fillRect(0, 0, w, h);
 
     ctx.translate(0, 0);
-    this.drawWorld(ctx);
+    const restoreNetBlend = this.netClientBeginDrawBlend();
+    try {
+      this.drawWorld(ctx);
+    } finally {
+      if (restoreNetBlend) restoreNetBlend();
+    }
 
     ctx.restore();
   }
