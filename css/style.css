@@ -599,10 +599,20 @@ html.is-touch-game-chrome #overlay-menu .menu-shell {
 .menu-item {
   position: relative;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   /* Enables 3D “flip” on the bone pointers. */
   perspective: 900px;
+}
+
+.menu-note {
+  margin-top: 6px;
+  max-width: min(360px, 86vw);
+  font-size: 11px;
+  line-height: 1.25;
+  color: rgba(220, 212, 238, 0.78);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.65);
 }
 
 /* Bone pointers are now rendered via `assets/Bone.glb` on `.menu-bones-canvas`. */
