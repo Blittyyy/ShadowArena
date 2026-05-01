@@ -1302,6 +1302,22 @@ async function main() {
 
       game.update(dt);
 
+      // Host: deadman timeout for remote seats (fix "keeps moving after releasing keys").
+      if (gOnlineSession?.role === "host" && game.netMode === "host") {
+        const DEADMAN_MS = 220;
+        const tNow = performance.now();
+        const lastMs = gOnlineSession.inputLastMs;
+        if (Array.isArray(lastMs)) {
+          for (let s = 0; s < 4; s++) {
+            if (s === (gOnlineSession.hostSeat ?? 0)) continue;
+            const age = tNow - (lastMs[s] || 0);
+            if (age > DEADMAN_MS) {
+              setHostRemoteMovement(s, 0, 0);
+            }
+          }
+        }
+      }
+
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
         gOnlineSession.snapAcc = (gOnlineSession.snapAcc ?? 0) + dt;
         /** Fixed tick (~20 Hz) — stable payload cadence for clients. */
@@ -1439,6 +1455,8 @@ async function main() {
       roomCode,
       hostSeat: 0,
       snapAcc: 0,
+      // Deadman: if a client stops sending input (packet loss / focus loss), force stop.
+      inputLastMs: [performance.now(), 0, 0, 0],
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
     };
     setOnlineHostBridge(0);
@@ -1446,6 +1464,10 @@ async function main() {
     socket.off("game:inputRelay");
     socket.on("game:inputRelay", ({ seat, ax, ay }) => {
       setHostRemoteMovement(seat, ax, ay);
+      if (gOnlineSession?.role === "host" && Array.isArray(gOnlineSession.inputLastMs)) {
+        const s = Math.max(0, Math.min(3, Number(seat) | 0));
+        gOnlineSession.inputLastMs[s] = performance.now();
+      }
     });
     socket.off("game:upgradePickRelay");
     socket.on("game:upgradePickRelay", ({ seat, upgradeId }) => {
