@@ -1304,7 +1304,7 @@ async function main() {
 
       // Host: deadman timeout for remote seats (fix "keeps moving after releasing keys").
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
-        const DEADMAN_MS = 220;
+        const DEADMAN_MS = 160;
         const tNow = performance.now();
         const lastMs = gOnlineSession.inputLastMs;
         if (Array.isArray(lastMs)) {
@@ -1335,18 +1335,48 @@ async function main() {
           0,
           Math.min(3, Math.floor(Number(gOnlineSession.mySeat) || 0))
         );
-        gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
-        const sendDt = 1 / 30;
-        if (gOnlineSession.inputAcc >= sendDt) {
-          gOnlineSession.inputAcc = 0;
-          const m = getMovement(seat);
+        const sock = gOnlineSession.socket;
+        const m = getMovement(seat);
+        const prev = gOnlineSession.lastEmittedInput || { ax: 999, ay: 999 };
+        const tol = 0.001;
+        const changed = Math.abs(m.x - prev.ax) > tol || Math.abs(m.y - prev.ay) > tol;
+
+        const emitInput = (ax, ay) => {
           try {
-            gOnlineSession.socket.emit("game:input", { ax: m.x, ay: m.y });
+            sock.emit("game:input", { ax, ay });
           } catch {
             //
           }
-          if (MULTIPLAYER_DEBUG) {
-            gOnlineSession._dbgInputN = (gOnlineSession._dbgInputN ?? 0) + 1;
+          gOnlineSession.lastEmittedInput = { ax, ay };
+          if (MULTIPLAYER_DEBUG) gOnlineSession._dbgInputN = (gOnlineSession._dbgInputN ?? 0) + 1;
+        };
+
+        // Immediate send on any change (especially critical for stop/zero).
+        if (changed) {
+          emitInput(m.x, m.y);
+          // If we just stopped, redundantly send stop a couple times to survive packet loss.
+          if (Math.hypot(m.x, m.y) < 1e-4) {
+            if (gOnlineSession._stopBurst == null) gOnlineSession._stopBurst = 0;
+            gOnlineSession._stopBurst = 2;
+            gOnlineSession._stopBurstT = 0;
+          }
+        }
+
+        // Steady-state send (60 Hz) to keep host authoritative state tight.
+        gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
+        const sendDt = 1 / 60;
+        if (gOnlineSession.inputAcc >= sendDt) {
+          gOnlineSession.inputAcc = 0;
+          emitInput(m.x, m.y);
+        }
+
+        // Stop burst handling.
+        if ((gOnlineSession._stopBurst ?? 0) > 0) {
+          gOnlineSession._stopBurstT = (gOnlineSession._stopBurstT ?? 0) + dt;
+          if (gOnlineSession._stopBurstT >= 0.03) {
+            gOnlineSession._stopBurstT = 0;
+            gOnlineSession._stopBurst = Math.max(0, (gOnlineSession._stopBurst ?? 0) - 1);
+            emitInput(0, 0);
           }
         }
       }
@@ -1515,6 +1545,8 @@ async function main() {
       roomCode,
       mySeat,
       lastEmittedInput: null,
+      _stopBurst: 0,
+      _stopBurstT: 0,
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
     };
 
@@ -1535,6 +1567,19 @@ async function main() {
           //
         }
       }
+    });
+
+    // If the joiner loses focus / hides the tab, force-stop on the host immediately.
+    const stopNow = () => {
+      try {
+        socket.emit("game:input", { ax: 0, ay: 0 });
+      } catch {
+        //
+      }
+    };
+    window.addEventListener("blur", stopNow);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") stopNow();
     });
 
     refreshOverlays(game);
