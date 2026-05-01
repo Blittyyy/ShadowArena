@@ -47,7 +47,15 @@ function randomRoomCode() {
   return s;
 }
 
-/** @type {Map<string, { code: string, hostId: string, members: Map<string, { seat: number, characterId: string, ready: boolean }>, started: boolean }>} */
+function sanitizeDisplayName(raw) {
+  let s = String(raw ?? "").trim().replace(/\s+/g, " ");
+  s = s.replace(/[\x00-\x1f\x7f]/g, "");
+  if (s.length > 20) s = s.slice(0, 20);
+  if (!s) s = "Player";
+  return s;
+}
+
+/** @type {Map<string, { code: string, hostId: string, members: Map<string, { seat: number, characterId: string, ready: boolean, displayName: string }>, started: boolean }>} */
 const rooms = new Map();
 
 function lobbyPayload(room) {
@@ -58,6 +66,7 @@ function lobbyPayload(room) {
       seat: m.seat,
       characterId: m.characterId,
       ready: m.ready,
+      displayName: m.displayName || "Player",
       isHost: sid === room.hostId,
     });
   }
@@ -74,17 +83,27 @@ function nextFreeSeat(room) {
 io.on("connection", (socket) => {
   socket.data.roomCode = null;
 
-  socket.on("room:create", (ack) => {
+  socket.on("room:create", (a, b) => {
+    /** Back-compat: `emit("room:create", ack)` or `emit("room:create", { displayName }, ack)` */
+    let payload = {};
+    let ack = b;
+    if (typeof a === "function") {
+      ack = a;
+    } else if (typeof a === "object" && a !== null) {
+      payload = a;
+      ack = typeof b === "function" ? b : () => {};
+    }
     if (typeof ack !== "function") return;
     let code = randomRoomCode();
     while (rooms.has(code)) code = randomRoomCode();
+    const dn = sanitizeDisplayName(payload.displayName ?? payload.name);
     const room = {
       code,
       hostId: socket.id,
       members: new Map(),
       started: false,
     };
-    room.members.set(socket.id, { seat: 0, characterId: "mage", ready: false });
+    room.members.set(socket.id, { seat: 0, characterId: "mage", ready: false, displayName: dn });
     rooms.set(code, room);
     socket.join(code);
     socket.data.roomCode = code;
@@ -112,7 +131,13 @@ io.on("connection", (socket) => {
       ack({ ok: false, error: "Room is full." });
       return;
     }
-    room.members.set(socket.id, { seat, characterId: "mage", ready: false });
+    const dnJoin = sanitizeDisplayName(payload?.displayName ?? payload?.name);
+    room.members.set(socket.id, {
+      seat,
+      characterId: "mage",
+      ready: false,
+      displayName: dnJoin,
+    });
     socket.join(code);
     socket.data.roomCode = code;
     ack({ ok: true, ...lobbyPayload(room), yourSeat: seat });
@@ -121,6 +146,16 @@ io.on("connection", (socket) => {
 
   socket.on("room:leave", () => {
     leaveRoom(socket, false);
+  });
+
+  socket.on("lobby:setDisplayName", (payload) => {
+    const code = socket.data.roomCode;
+    const room = code ? rooms.get(code) : null;
+    if (!room || room.started) return;
+    const m = room.members.get(socket.id);
+    if (!m) return;
+    m.displayName = sanitizeDisplayName(payload?.displayName ?? payload?.name);
+    io.to(code).emit("room:lobby", lobbyPayload(room));
   });
 
   socket.on("lobby:setCharacter", (payload) => {
@@ -168,7 +203,11 @@ io.on("connection", (socket) => {
     }
     room.started = true;
     const roster = [...room.members.entries()]
-      .map(([_socketId, m]) => ({ seat: m.seat, characterId: m.characterId }))
+      .map(([_socketId, m]) => ({
+        seat: m.seat,
+        characterId: m.characterId,
+        displayName: m.displayName || "Player",
+      }))
       .sort((a, b) => a.seat - b.seat);
     ack({ ok: true, roster });
     io.to(code).emit("game:start", { roster });

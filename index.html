@@ -82,6 +82,17 @@
         <h2>Online Co-op</h2>
         <p class="sub">Room codes · Host runs the world · Deploy server separately and set <code>MULTIPLAYER_SERVER_URL</code> or <code>?server=</code></p>
         <p id="online-err" class="online-err" role="alert"></p>
+        <label class="online-name-label" for="online-display-name">Display name</label>
+        <input
+          id="online-display-name"
+          class="online-display-name-input"
+          type="text"
+          maxlength="24"
+          autocomplete="nickname"
+          spellcheck="false"
+          placeholder="Nickname (shown to others)"
+          title="Stored on this browser only — not an account."
+        />
         <div class="online-actions">
           <button type="button" id="btn-online-create" class="btn-confirm-premium">Create room</button>
           <div class="online-join-row">
@@ -149,6 +160,34 @@
         <div id="character-select-header-browse" class="character-select-header hidden" aria-hidden="true">
           <h2>Champion codex</h2>
           <p class="sub">Browse each class—stats, weapons, and passives. Use Start on the title menu when you’re ready to play.</p>
+        </div>
+
+        <div id="online-charselect-panel" class="online-charselect-panel hidden" aria-label="Online room">
+          <p class="sub online-charselect-hint">
+            Share the room code so friends join <strong>this</strong> screen. Pick your class · Ready · host starts when everyone is ready.
+          </p>
+          <p id="online-charselect-err" class="online-err" role="alert"></p>
+          <div class="online-charselect-name-row">
+            <label for="online-charselect-display-name">Your name</label>
+            <input
+              id="online-charselect-display-name"
+              class="online-display-name-input online-charselect-name-input"
+              type="text"
+              maxlength="24"
+              autocomplete="nickname"
+              spellcheck="false"
+              placeholder="Same as menu / edit here"
+            />
+          </div>
+          <div class="online-charselect-toolbar">
+            <span class="online-charselect-code-label">Room</span>
+            <span id="online-charselect-room-code" class="online-charselect-code-text">-----</span>
+            <button type="button" id="btn-online-charselect-copy" class="btn-secondary">Copy code</button>
+            <button type="button" id="btn-online-charselect-ready" class="btn-secondary">Ready</button>
+            <button type="button" id="btn-online-charselect-start" class="btn-confirm-premium" disabled>Start game</button>
+            <button type="button" id="btn-online-charselect-leave" class="btn-secondary">Leave room</button>
+          </div>
+          <div id="online-charselect-roster" class="online-charselect-roster"></div>
         </div>
 
         <div id="mp-player-slots" class="mp-player-slots" aria-label="Player slots"></div>

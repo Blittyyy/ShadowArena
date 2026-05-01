@@ -1881,6 +1881,53 @@ html, body {
   margin: 8px 0;
 }
 
+.online-name-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(190, 180, 220, 0.88);
+  margin: 6px 0 4px;
+}
+
+.online-display-name-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(155, 109, 255, 0.35);
+  background: rgba(20, 16, 30, 0.95);
+  color: #f0ecf8;
+  font-size: 15px;
+}
+
+.online-display-name-input::placeholder {
+  color: rgba(180, 170, 210, 0.45);
+}
+
+.online-charselect-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: rgba(210, 200, 232, 0.9);
+}
+
+.online-charselect-name-row label {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.online-charselect-name-input {
+  flex: 1;
+  min-width: 140px;
+  margin-bottom: 0;
+}
+
 .online-actions {
   display: flex;
   flex-direction: column;
@@ -1949,4 +1996,76 @@ html, body {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
+}
+
+/* Online co-op uses full character-select; room bar lives above the grid */
+.online-charselect-panel {
+  width: min(760px, calc(100% - 32px));
+  margin: 0 auto 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(18, 12, 32, 0.72);
+  border: 1px solid rgba(155, 109, 255, 0.28);
+}
+
+.online-charselect-panel.hidden {
+  display: none;
+}
+
+.online-charselect-hint {
+  margin: 0 0 10px;
+  color: rgba(210, 200, 232, 0.88);
+}
+
+.online-charselect-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.online-charselect-code-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(180, 168, 210, 0.85);
+}
+
+.online-charselect-code-text {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #f3effa;
+}
+
+.online-charselect-toolbar .btn-secondary,
+.online-charselect-toolbar .btn-confirm-premium {
+  font-size: 13px;
+  padding: 8px 14px;
+}
+
+.online-charselect-toolbar .btn-confirm-premium[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.online-charselect-roster {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: #d8cfe8;
+}
+
+.online-charselect-roster-row {
+  padding: 8px 10px;
+  background: rgba(30, 24, 44, 0.72);
+  border-radius: 8px;
+  border: 1px solid rgba(155, 109, 255, 0.18);
+}
+
+#overlay-character-select.online-charselect-active .character-mp-controls,
+#overlay-character-select.online-charselect-active #mp-player-slots {
+  display: none;
 }

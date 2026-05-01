@@ -77,18 +77,67 @@ const mpPlayerSlots = document.getElementById("mp-player-slots");
 const overlayOnlineMenu = document.getElementById("overlay-online-menu");
 const overlayOnlineLobby = document.getElementById("overlay-online-lobby");
 const onlineErrEl = document.getElementById("online-err");
+const onlineMenuDisplayNameEl = document.getElementById("online-display-name");
+const onlineCharSelectDisplayNameEl = document.getElementById("online-charselect-display-name");
 const onlineJoinCodeInput = document.getElementById("online-join-code");
 const onlineRoomCodeDisplay = document.getElementById("online-room-code");
 const onlineLobbySlots = document.getElementById("online-lobby-slots");
 const btnOnlineCreate = document.getElementById("btn-online-create");
 const btnOnlineJoinSubmit = document.getElementById("btn-online-join-submit");
 const onlineLobbyErrEl = document.getElementById("online-lobby-err");
+const onlineCharSelectErrEl = document.getElementById("online-charselect-err");
 const btnOnlineBackMenu = document.getElementById("btn-online-back-menu");
 const btnOnlineFromMenu = document.getElementById("btn-online-from-menu");
 const btnOnlineLobbyBack = document.getElementById("btn-online-lobby-back");
 const btnOnlineReady = document.getElementById("btn-online-ready");
 const btnOnlineStart = document.getElementById("btn-online-start");
 const btnOnlineCopyCode = document.getElementById("btn-online-copy-code");
+
+const onlineCharSelectPanel = document.getElementById("online-charselect-panel");
+const onlineCharSelectRoomCodeEl = document.getElementById("online-charselect-room-code");
+const onlineCharSelectRosterEl = document.getElementById("online-charselect-roster");
+const btnOnlineCharCopy = document.getElementById("btn-online-charselect-copy");
+const btnOnlineCharReady = document.getElementById("btn-online-charselect-ready");
+const btnOnlineCharStart = document.getElementById("btn-online-charselect-start");
+const btnOnlineCharLeave = document.getElementById("btn-online-charselect-leave");
+const characterMpControlsEl = document.querySelector("#overlay-character-select .character-mp-controls");
+const characterSelectPickSubEl = characterSelectHeaderPick?.querySelector(".sub") ?? null;
+const CHARSEL_LOCAL_SUB_TEXT = "Select your starting class";
+
+function setOnlineCoopLobbyErr(text) {
+  if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = text;
+  if (onlineCharSelectErrEl) onlineCharSelectErrEl.textContent = text;
+}
+
+/** Pick-up nickname (localStorage). Server clamps to safe length separately. */
+const ONLINE_DISPLAY_NAME_STORAGE = "shadowArenaOnlineDisplayName";
+const ONLINE_DISPLAY_MAX_LEN = 24;
+
+function normalizeTypedOnlineDisplayName(raw) {
+  let s = String(raw ?? "").trim().replace(/\s+/g, " ");
+  if (s.length > ONLINE_DISPLAY_MAX_LEN) s = s.slice(0, ONLINE_DISPLAY_MAX_LEN);
+  return s;
+}
+
+function loadStoredOnlineDisplayName() {
+  try {
+    const t = normalizeTypedOnlineDisplayName(localStorage.getItem(ONLINE_DISPLAY_NAME_STORAGE) ?? "");
+    if (t) return t;
+  } catch {
+    //
+  }
+  return "Player";
+}
+
+function persistStoredOnlineDisplayName(raw) {
+  const t = normalizeTypedOnlineDisplayName(raw) || loadStoredOnlineDisplayName();
+  try {
+    localStorage.setItem(ONLINE_DISPLAY_NAME_STORAGE, t);
+  } catch {
+    //
+  }
+  return t;
+}
 
 const SFX_UI_SRC = "assets/UI.ogg";
 /** @type {HTMLAudioElement[] | null} */
@@ -746,6 +795,10 @@ async function main() {
       btnCharacterConfirm.disabled = true;
       return;
     }
+    if (onlineUiMode === "char_select") {
+      btnCharacterConfirm.disabled = true;
+      return;
+    }
     const allReady = mpReady.length > 0 && mpReady.every((r) => r === true);
     btnCharacterConfirm.disabled = !allReady;
   };
@@ -786,7 +839,9 @@ async function main() {
 
   const syncCharacterSelectModeUI = () => {
     const browse = characterSelectBrowseOnly === true;
+    const onlineCharPick = onlineUiMode === "char_select" && !browse;
     overlayCharacterSelect?.classList.toggle("mode-browse", browse);
+    overlayCharacterSelect?.classList.toggle("online-charselect-active", onlineCharPick);
 
     if (characterSelectHeaderPick instanceof HTMLElement) {
       characterSelectHeaderPick.classList.toggle("hidden", browse);
@@ -797,9 +852,24 @@ async function main() {
       characterSelectHeaderBrowse.setAttribute("aria-hidden", browse ? "false" : "true");
     }
 
+    if (onlineCharSelectPanel instanceof HTMLElement) {
+      onlineCharSelectPanel.classList.toggle("hidden", !onlineCharPick);
+    }
+
     if (btnCharacterConfirm instanceof HTMLButtonElement) {
-      if (browse) btnCharacterConfirm.setAttribute("hidden", "");
-      else btnCharacterConfirm.removeAttribute("hidden");
+      if (browse) {
+        btnCharacterConfirm.setAttribute("hidden", "");
+      } else if (onlineCharPick) {
+        btnCharacterConfirm.setAttribute("hidden", "");
+      } else {
+        btnCharacterConfirm.removeAttribute("hidden");
+      }
+    }
+
+    if (characterSelectPickSubEl instanceof HTMLElement && !browse) {
+      characterSelectPickSubEl.textContent = onlineCharPick
+        ? "Online — share room code above, pick your class on the cards, then Ready."
+        : CHARSEL_LOCAL_SUB_TEXT;
     }
 
     if (browse) syncBrowseCardChrome();
@@ -808,7 +878,7 @@ async function main() {
       selectedCharacter = MP_CHAR_ORDER[mpCharIndex[0] ?? 0] ?? selectedCharacter;
       syncPickCardChrome();
       syncMpCardChrome();
-      renderMpSlots();
+      if (!onlineCharPick) renderMpSlots();
     }
     applyPortraitPreviewForCurrentMode();
     updateConfirmState();
@@ -1092,6 +1162,7 @@ async function main() {
 
       game.render();
       syncHud(game);
+      updateOnlineGameplayHint(game);
 
       if (game.mode === "levelUp" && upgradeChoices.childElementCount === 0) {
         showLevelUp(game);
@@ -1104,12 +1175,12 @@ async function main() {
       }
 
       hintT += dt;
-      if (!hintDismissed && hintT > 5 && hint) {
+      if (!hintDismissed && hintT > 5 && hint && game.netMode === "solo") {
         hintDismissed = true;
         hint.style.opacity = "0";
         hint.style.transition = "opacity 1s";
         setTimeout(() => {
-          if (hint) hint.style.display = "none";
+          if (hint && game?.netMode === "solo") hint.style.display = "none";
         }, 1100);
       }
 
@@ -1163,7 +1234,14 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "host";
-    gOnlineSession = { role: "host", socket, roomCode, hostSeat: 0, snapAcc: 0 };
+    gOnlineSession = {
+      role: "host",
+      socket,
+      roomCode,
+      hostSeat: 0,
+      snapAcc: 0,
+      seatDisplayNames: seatDisplayNamesFromRoster(roster),
+    };
     setOnlineHostBridge(0);
 
     socket.off("game:inputRelay");
@@ -1205,7 +1283,14 @@ async function main() {
     game = new Game(canvas);
     game.netMode = "client";
     setOnlineGuestSeat(mySeat);
-    gOnlineSession = { role: "client", socket, roomCode, mySeat, inputAcc: 0 };
+    gOnlineSession = {
+      role: "client",
+      socket,
+      roomCode,
+      mySeat,
+      inputAcc: 0,
+      seatDisplayNames: seatDisplayNamesFromRoster(roster),
+    };
 
     socket.off("game:snapshot");
     socket.on("game:snapshot", (snap) => {
@@ -1228,8 +1313,74 @@ async function main() {
   }
 
   let localOnlineReady = false;
+  let onlineDisplayNameLobbyEmitTimer = null;
+
+  function finalizeOnlineWireNameFromUi() {
+    const el =
+      onlineUiMode === "char_select"
+        ? onlineCharSelectDisplayNameEl
+        : onlineMenuDisplayNameEl;
+    const typed = normalizeTypedOnlineDisplayName(
+      el instanceof HTMLInputElement ? el.value : "",
+    );
+    return typed || loadStoredOnlineDisplayName();
+  }
+
+  function seatDisplayNamesFromRoster(roster) {
+    /** @type {string[]} */
+    const out = ["", "", "", ""];
+    for (const r of roster) {
+      const s = Math.max(0, Math.min(3, Number(r?.seat ?? 0) | 0));
+      const raw = typeof r.displayName === "string" ? r.displayName.trim() : "";
+      out[s] = raw || `Player ${s + 1}`;
+    }
+    return out;
+  }
+
+  function updateOnlineGameplayHint(game) {
+    if (!hint) return;
+    if (game.netMode === "solo") return;
+    const names = gOnlineSession?.seatDisplayNames;
+    if (!names || names.length !== 4) return;
+    const seat =
+      game.netMode === "host"
+        ? Math.max(0, Math.min(3, Number(gOnlineSession.hostSeat ?? 0) | 0))
+        : Math.max(0, Math.min(3, Number(gOnlineSession.mySeat ?? 0) | 0));
+    const bits = [];
+    for (let i = 0; i < 4; i++) {
+      const nm = typeof names[i] === "string" ? names[i].trim() : "";
+      if (!nm) continue;
+      bits.push(i === seat ? `${nm} (you · P${i + 1})` : `${nm} · P${i + 1}`);
+    }
+    hint.textContent =
+      bits.length > 0
+        ? `${bits.join(" · ")} · WASD · Esc pause`
+        : `You are P${seat + 1} · WASD · Esc pause`;
+    hint.style.opacity = "0.9";
+    hint.style.display = "";
+  }
+
+  function scheduleLobbyDisplayNameEmitFromCharPanel() {
+    if (onlineDisplayNameLobbyEmitTimer != null) clearTimeout(onlineDisplayNameLobbyEmitTimer);
+    onlineDisplayNameLobbyEmitTimer = window.setTimeout(() => {
+      onlineDisplayNameLobbyEmitTimer = null;
+      if (onlineUiMode !== "char_select" || !onlineSocket?.connected) return;
+      persistStoredOnlineDisplayName(
+        onlineCharSelectDisplayNameEl instanceof HTMLInputElement
+          ? onlineCharSelectDisplayNameEl.value
+          : "",
+      );
+      onlineSocket.emit("lobby:setDisplayName", {
+        displayName: finalizeOnlineWireNameFromUi(),
+      });
+    }, 420);
+  }
 
   function disconnectOnlineSocket() {
+    if (onlineDisplayNameLobbyEmitTimer != null) {
+      clearTimeout(onlineDisplayNameLobbyEmitTimer);
+      onlineDisplayNameLobbyEmitTimer = null;
+    }
     try {
       onlineSocket?.removeAllListeners?.();
       onlineSocket?.disconnect?.();
@@ -1239,16 +1390,88 @@ async function main() {
     onlineSocket = null;
   }
 
+  function syncOnlineReadyButtonLabels() {
+    const lab = localOnlineReady ? "Unready" : "Ready";
+    if (btnOnlineReady) btnOnlineReady.textContent = lab;
+    if (btnOnlineCharReady) btnOnlineCharReady.textContent = lab;
+  }
+
+  function toggleOnlineLobbyReady() {
+    localOnlineReady = !localOnlineReady;
+    onlineSocket?.emit("lobby:setReady", { ready: localOnlineReady });
+    syncOnlineReadyButtonLabels();
+  }
+
+  function refreshOnlineCharacterSelect(payload) {
+    if (!(onlineCharSelectRosterEl instanceof HTMLElement)) return;
+    const code = payload.code ?? onlineRoomCode;
+    onlineRoomCode = code;
+    if (onlineCharSelectRoomCodeEl) onlineCharSelectRoomCodeEl.textContent = code;
+    if (onlineRoomCodeDisplay) onlineRoomCodeDisplay.textContent = code;
+    const players = payload.players ?? [];
+    onlineCharSelectRosterEl.innerHTML = "";
+    for (const row of players) {
+      const div = document.createElement("div");
+      div.className = "online-charselect-roster-row";
+      const tag = row.isHost ? " · Host" : "";
+      const nick =
+        typeof row.displayName === "string" && row.displayName.trim()
+          ? row.displayName.trim()
+          : `Player`;
+      div.textContent = `P${row.seat + 1} · ${nick} · ${row.characterId}${tag}${row.ready ? " · Ready" : ""}`;
+      onlineCharSelectRosterEl.appendChild(div);
+    }
+    const me = players.find((p) => p.socketId === onlineSocket?.id);
+    if (me) {
+      localOnlineReady = !!me.ready;
+      syncOnlineReadyButtonLabels();
+      const cid = me.characterId;
+      const ix = MP_CHAR_ORDER.indexOf(cid);
+      const seatIx = Math.max(0, Math.min(localPlayerCount - 1, onlineMySeat | 0));
+      if (ix >= 0) {
+        mpCharIndex[seatIx] = ix;
+        selectedCharacter = cid;
+        syncPickCardChrome();
+        syncMpCardChrome();
+      }
+    }
+    const allR = players.length > 0 && players.every((p) => p.ready);
+    if (btnOnlineCharStart) {
+      btnOnlineCharStart.disabled = !onlineIsHost || !allR;
+      btnOnlineCharStart.style.display = onlineIsHost ? "" : "none";
+    }
+    if (btnOnlineStart) {
+      btnOnlineStart.disabled = !onlineIsHost || !allR;
+      btnOnlineStart.style.display = onlineIsHost ? "" : "none";
+    }
+  }
+
+  async function copyOnlineRoomCodeWithFeedback() {
+    const t = onlineRoomCode || "";
+    try {
+      await navigator.clipboard.writeText(t);
+      setOnlineCoopLobbyErr("");
+    } catch {
+      setOnlineCoopLobbyErr("Copy failed — select and copy manually.");
+    }
+  }
+
   function leaveOnlineLobbyUi() {
     onlineUiMode = null;
     localOnlineReady = false;
-    if (btnOnlineReady) btnOnlineReady.textContent = "Ready";
+    syncOnlineReadyButtonLabels();
     showOverlay(overlayOnlineLobby, false);
     showOverlay(overlayOnlineMenu, false);
+    onlineCharSelectPanel?.classList.add("hidden");
+    overlayCharacterSelect?.classList.remove("online-charselect-active");
     disconnectOnlineSocket();
-    // onlineUiMode is already null above; mirror setScreen(menu) visibility.
-    showOverlay(overlayMenu, screen === "menu");
-    if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
+    if (screen === "character_select") {
+      characterSelectBrowseOnly = false;
+      setScreen("menu");
+    } else {
+      showOverlay(overlayMenu, screen === "menu");
+    }
+    setOnlineCoopLobbyErr("");
     if (onlineErrEl) onlineErrEl.textContent = "";
   }
 
@@ -1257,38 +1480,16 @@ async function main() {
     showOverlay(overlayMenu, false);
     showOverlay(overlayOnlineMenu, true);
     if (onlineErrEl) onlineErrEl.textContent = "";
-  }
-
-  function renderOnlineLobby(payload) {
-    if (!onlineLobbySlots) return;
-    const code = payload.code ?? onlineRoomCode;
-    onlineRoomCode = code;
-    if (onlineRoomCodeDisplay) onlineRoomCodeDisplay.textContent = code;
-    const players = payload.players ?? [];
-    onlineLobbySlots.innerHTML = "";
-    for (const row of players) {
-      const div = document.createElement("div");
-      div.className = "online-lobby-row";
-      const tag = row.isHost ? " · Host" : "";
-      div.textContent = `P${row.seat + 1} · ${row.characterId}${tag}${row.ready ? " · Ready" : ""}`;
-      onlineLobbySlots.appendChild(div);
-    }
-    const me = players.find((p) => p.socketId === onlineSocket?.id);
-    if (me) {
-      localOnlineReady = !!me.ready;
-      if (btnOnlineReady) btnOnlineReady.textContent = localOnlineReady ? "Unready" : "Ready";
-    }
-    const allR = players.length > 0 && players.every((p) => p.ready);
-    if (btnOnlineStart) {
-      btnOnlineStart.disabled = !onlineIsHost || !allR;
-      btnOnlineStart.style.display = onlineIsHost ? "" : "none";
+    if (onlineMenuDisplayNameEl instanceof HTMLInputElement) {
+      const cur = normalizeTypedOnlineDisplayName(onlineMenuDisplayNameEl.value);
+      if (!cur) onlineMenuDisplayNameEl.value = loadStoredOnlineDisplayName();
     }
   }
 
   function attachOnlineSocketHandlers(sock) {
     sock.off("room:lobby");
     sock.on("room:lobby", (payload) => {
-      if (onlineUiMode === "lobby") renderOnlineLobby(payload);
+      if (onlineUiMode === "char_select") refreshOnlineCharacterSelect(payload);
     });
     sock.off("game:start");
     sock.on("game:start", ({ roster }) => {
@@ -1347,7 +1548,9 @@ async function main() {
     });
     onlineSocket.once("connect", () => {
       attachOnlineSocketHandlers(onlineSocket);
-      onlineSocket.emit("room:create", (res) => {
+      const dnWire = finalizeOnlineWireNameFromUi();
+      persistStoredOnlineDisplayName(dnWire);
+      onlineSocket.emit("room:create", { displayName: dnWire }, (res) => {
         if (!res?.ok) {
           if (onlineErrEl) onlineErrEl.textContent = res?.error || "Could not create room.";
           return;
@@ -1356,11 +1559,19 @@ async function main() {
         onlineIsHost = true;
         onlineMySeat = 0;
         localOnlineReady = false;
-        onlineUiMode = "lobby";
+        syncOnlineReadyButtonLabels();
+        onlineUiMode = "char_select";
         showOverlay(overlayOnlineMenu, false);
-        showOverlay(overlayOnlineLobby, true);
-        if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
-        renderOnlineLobby(res);
+        showOverlay(overlayOnlineLobby, false);
+        setOnlineCoopLobbyErr("");
+        setLocalPlayerCount(1);
+        characterSelectBrowseOnly = false;
+        if (onlineCharSelectDisplayNameEl instanceof HTMLInputElement) {
+          onlineCharSelectDisplayNameEl.value = dnWire;
+        }
+        refreshOnlineCharacterSelect(res);
+        setScreen("character_select");
+        syncCharacterSelectModeUI();
       });
     });
   });
@@ -1394,7 +1605,9 @@ async function main() {
     });
     onlineSocket.once("connect", () => {
       attachOnlineSocketHandlers(onlineSocket);
-      onlineSocket.emit("room:join", { code: raw }, (res) => {
+      const dnWire = finalizeOnlineWireNameFromUi();
+      persistStoredOnlineDisplayName(dnWire);
+      onlineSocket.emit("room:join", { code: raw, displayName: dnWire }, (res) => {
         if (!res?.ok) {
           if (onlineErrEl) onlineErrEl.textContent = res?.error || "Could not join.";
           return;
@@ -1403,13 +1616,42 @@ async function main() {
         onlineIsHost = false;
         onlineMySeat = Number.isFinite(res.yourSeat) ? res.yourSeat : 0;
         localOnlineReady = false;
-        onlineUiMode = "lobby";
+        syncOnlineReadyButtonLabels();
+        onlineUiMode = "char_select";
         showOverlay(overlayOnlineMenu, false);
-        showOverlay(overlayOnlineLobby, true);
-        if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "";
-        renderOnlineLobby(res);
+        showOverlay(overlayOnlineLobby, false);
+        setOnlineCoopLobbyErr("");
+        setLocalPlayerCount(1);
+        characterSelectBrowseOnly = false;
+        if (onlineCharSelectDisplayNameEl instanceof HTMLInputElement) {
+          onlineCharSelectDisplayNameEl.value = dnWire;
+        }
+        refreshOnlineCharacterSelect(res);
+        setScreen("character_select");
+        syncCharacterSelectModeUI();
       });
     });
+  });
+
+  onlineMenuDisplayNameEl?.addEventListener("blur", () => {
+    if (onlineMenuDisplayNameEl instanceof HTMLInputElement)
+      persistStoredOnlineDisplayName(onlineMenuDisplayNameEl.value);
+  });
+
+  onlineCharSelectDisplayNameEl?.addEventListener("blur", () => {
+    if (onlineUiMode !== "char_select") return;
+    if (onlineCharSelectDisplayNameEl instanceof HTMLInputElement) {
+      persistStoredOnlineDisplayName(onlineCharSelectDisplayNameEl.value);
+    }
+    if (onlineSocket?.connected) {
+      onlineSocket.emit("lobby:setDisplayName", {
+        displayName: finalizeOnlineWireNameFromUi(),
+      });
+    }
+  });
+
+  onlineCharSelectDisplayNameEl?.addEventListener("input", () => {
+    scheduleLobbyDisplayNameEmitFromCharPanel();
   });
 
   document.querySelectorAll(".online-char-btn").forEach((btn) => {
@@ -1419,25 +1661,26 @@ async function main() {
     });
   });
 
-  btnOnlineReady?.addEventListener("click", () => {
-    localOnlineReady = !localOnlineReady;
-    onlineSocket?.emit("lobby:setReady", { ready: localOnlineReady });
-    if (btnOnlineReady) btnOnlineReady.textContent = localOnlineReady ? "Unready" : "Ready";
-  });
+  btnOnlineReady?.addEventListener("click", () => toggleOnlineLobbyReady());
 
   btnOnlineStart?.addEventListener("click", () => {
     onlineSocket?.emit("room:start", {}, (res) => {
-      if (!res?.ok && onlineLobbyErrEl) onlineLobbyErrEl.textContent = res?.error || "Cannot start.";
+      if (!res?.ok) setOnlineCoopLobbyErr(res?.error || "Cannot start.");
     });
   });
 
-  btnOnlineCopyCode?.addEventListener("click", async () => {
-    const t = onlineRoomCode || "";
-    try {
-      await navigator.clipboard.writeText(t);
-    } catch {
-      if (onlineLobbyErrEl) onlineLobbyErrEl.textContent = "Copy failed — select and copy manually.";
-    }
+  btnOnlineCopyCode?.addEventListener("click", () => copyOnlineRoomCodeWithFeedback());
+
+  btnOnlineCharCopy?.addEventListener("click", () => copyOnlineRoomCodeWithFeedback());
+  btnOnlineCharReady?.addEventListener("click", () => toggleOnlineLobbyReady());
+  btnOnlineCharStart?.addEventListener("click", () => {
+    onlineSocket?.emit("room:start", {}, (res) => {
+      if (!res?.ok) setOnlineCoopLobbyErr(res?.error || "Cannot start.");
+    });
+  });
+  btnOnlineCharLeave?.addEventListener("click", () => {
+    if (onlineSocket) onlineSocket.emit("room:leave");
+    leaveOnlineLobbyUi();
   });
 
   btnStartGame?.addEventListener("click", () => {
@@ -1451,7 +1694,14 @@ async function main() {
     syncCharacterSelectModeUI();
     setScreen("character_select");
   });
-  btnCharacterBack?.addEventListener("click", () => setScreen("menu"));
+  btnCharacterBack?.addEventListener("click", () => {
+    if (onlineUiMode === "char_select") {
+      onlineSocket?.emit("room:leave");
+      leaveOnlineLobbyUi();
+      return;
+    }
+    setScreen("menu");
+  });
 
   // Escape: close main-menu settings panel.
   window.addEventListener("keydown", (e) => {
@@ -1507,7 +1757,19 @@ async function main() {
       applyPortraitPreviewForCurrentMode();
       return;
     }
-    // In multiplayer select, clicking sets Player 1 (simple + stable).
+    if (onlineUiMode === "char_select") {
+      const idx = MP_CHAR_ORDER.indexOf(id);
+      const seatIx = Math.max(0, Math.min(localPlayerCount - 1, onlineMySeat | 0));
+      if (idx >= 0) mpCharIndex[seatIx] = idx;
+      selectedCharacter = id;
+      onlineSocket?.emit("lobby:setCharacter", { characterId: id });
+      syncPickCardChrome();
+      syncMpCardChrome();
+      applyPortraitPreviewForCurrentMode();
+      updateConfirmState();
+      return;
+    }
+    // Local lobby: clicking sets Player 1 (simple + stable).
     const idx = MP_CHAR_ORDER.indexOf(id);
     if (idx >= 0) mpCharIndex[0] = idx;
     selectedCharacter = id;
@@ -1522,6 +1784,7 @@ async function main() {
 
   btnCharacterConfirm?.addEventListener("click", () => {
     if (characterSelectBrowseOnly === true) return;
+    if (onlineUiMode === "char_select") return;
     if (!(mpReady.length > 0 && mpReady.every((r) => r === true))) return;
     startGame();
   });
@@ -1530,6 +1793,7 @@ async function main() {
   window.addEventListener("keydown", (e) => {
     if (screen !== "character_select") return;
     if (characterSelectBrowseOnly === true) return;
+    if (onlineUiMode === "char_select") return;
     if (e.repeat) return;
     const code = e.code;
     let pIdx = -1;
@@ -1565,6 +1829,7 @@ async function main() {
   mpPlayerSlots?.addEventListener("click", (e) => {
     if (screen !== "character_select") return;
     if (characterSelectBrowseOnly === true) return;
+    if (onlineUiMode === "char_select") return;
     const el = e.target instanceof Element ? e.target.closest("button[data-ready-btn]") : null;
     if (!el) return;
     const idx = Number(el.getAttribute("data-ready-btn"));
