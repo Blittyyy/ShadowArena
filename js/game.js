@@ -535,8 +535,9 @@ export class Game {
     this._sfxLevelUpPoolIx = 0;
     /** `'solo'` | `'host'` | `'client'` — online guests apply snapshots only. */
     this.netMode = "solo";
-    /** Online client only: seat using local WASD (`setOnlineGuestSeat`); drives movement prediction between snapshots. */
-    this.netClientSeat = null;
+    /** Online client: last replicated camera targets from snapshots (smoothly approached each frame). */
+    this.netReplayCamX = NaN;
+    this.netReplayCamY = NaN;
     this.reset();
   }
 
@@ -1630,7 +1631,15 @@ export class Game {
       this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
       this.updateParticles(dt);
       this.updateFloatTexts(dt);
-      this.applyNetClientSeatPredict(dt);
+      if (
+        this.mode === "playing" &&
+        Number.isFinite(this.netReplayCamX) &&
+        Number.isFinite(this.netReplayCamY)
+      ) {
+        const k = 1 - Math.exp(-(CONFIG.CAMERA_SMOOTH ?? 12) * dt);
+        this.camX += (this.netReplayCamX - this.camX) * k;
+        this.camY += (this.netReplayCamY - this.camY) * k;
+      }
       return;
     }
     if (this.mode === "paused") {
@@ -2384,37 +2393,6 @@ export class Game {
         : {}),
     });
     return true;
-  }
-
-  /**
-   * Guest client: integrates local WASD movement between host snapshots using the same arena slide as simulation.
-   * Host remains authoritative — small rubber-band correction when snaps arrive — but input feels responsive.
-   * @param {number} dt
-   */
-  applyNetClientSeatPredict(dt) {
-    if (this.netMode !== "client" || !Number.isFinite(this.netClientSeat)) return;
-    const seatIx = Math.max(0, Math.min(3, Math.floor(this.netClientSeat)));
-    const p = this.players?.[seatIx];
-    if (!p || (p.hp ?? 0) <= 0) return;
-    const m = getMovement(seatIx);
-    if (m.x * m.x + m.y * m.y < 1e-12) return;
-    const sp = this.getMoveSpeed(p);
-    const mult =
-      typeof CONFIG.COLLISION_PLAYER_RADIUS_MULT === "number"
-        ? CONFIG.COLLISION_PLAYER_RADIUS_MULT
-        : 1;
-    const pr = CONFIG.PLAYER_RADIUS * mult;
-    const nx = p.x + m.x * sp * dt;
-    const ny = p.y + m.y * sp * dt;
-    const moved = applyArenaCollisionSlide(p.x, p.y, nx, ny, pr);
-    p.x = clamp(moved.x, pr, CONFIG.WORLD_W - pr);
-    p.y = clamp(moved.y, pr, CONFIG.WORLD_H - pr);
-    // Keep facing vaguely aligned between snaps (animations still authoritative from snapshots).
-    const mm = Math.hypot(m.x, m.y);
-    if (mm > 1e-4 && p.facingVec) {
-      p.facingVec.x = m.x / mm;
-      p.facingVec.y = m.y / mm;
-    }
   }
 
   updatePlayer(dt, playerIndex = 0) {

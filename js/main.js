@@ -6,10 +6,10 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-net-latency-1";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-net-jitter-1";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-04-30-client-smooth-1";
+import { Game } from "./game.js?v=2026-04-30-net-jitter-1";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -1224,7 +1224,6 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "solo";
-    game.netClientSeat = null;
 
     refreshOverlays(game);
     syncHud(game);
@@ -1256,7 +1255,6 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "host";
-    game.netClientSeat = null;
     gOnlineSession = {
       role: "host",
       socket,
@@ -1306,7 +1304,6 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "client";
-    game.netClientSeat = mySeat;
     setOnlineGuestSeat(mySeat);
     gOnlineSession = {
       role: "client",

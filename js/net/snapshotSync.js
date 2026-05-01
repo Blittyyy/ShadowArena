@@ -194,8 +194,14 @@ export function applyGameSnapshot(game, snap) {
   game.xpToNext = snap.xpToNext ?? game.xpToNext;
   game.levelUpsPending = snap.levelUpsPending ?? 0;
   game.upgradePlayerIndex = snap.upgradePlayerIndex ?? 0;
-  game.camX = snap.camX ?? game.camX;
-  game.camY = snap.camY ?? game.camY;
+  if (game.netMode !== "client") {
+    game.camX = snap.camX ?? game.camX;
+    game.camY = snap.camY ?? game.camY;
+  } else if (Number.isFinite(snap.camX) && Number.isFinite(snap.camY)) {
+    /** Host-visible camera sampled ~30 Hz — client lerps toward this in Game.update for stable framing. */
+    game.netReplayCamX = snap.camX;
+    game.netReplayCamY = snap.camY;
+  }
   game.camTargetX = snap.camTargetX ?? game.camTargetX;
   game.camTargetY = snap.camTargetY ?? game.camTargetY;
   game.shake = snap.shake ?? 0;
