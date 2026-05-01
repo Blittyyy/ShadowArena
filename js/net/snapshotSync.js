@@ -8,6 +8,63 @@ export const RECONCILE_LERP = 0.12;
 export const SNAP_DISTANCE = 120;
 export const INTERPOLATION_DELAY_MS = 120;
 
+function snapEnemy(e) {
+  if (!e) return null;
+  return {
+    id: e.id,
+    typeId: e.typeId,
+    x: e.x,
+    y: e.y,
+    hp: e.hp,
+    maxHp: e.maxHp,
+    hitFlash: e.hitFlash ?? 0,
+    // Animation-relevant state used by render logic (small, avoids sliding/idle mismatch).
+    animPhase: e.animPhase ?? 0,
+    necSummonT: e.necSummonT ?? 0,
+    necMoving: e.necMoving ?? false,
+    necFacingRight: e.necFacingRight ?? false,
+    beastState: e.beastState ?? "pause",
+    bossAnimKey: e.bossAnimKey ?? "walk",
+    bossAnimFrame: e.bossAnimFrame ?? 0,
+    splitPopT: e.splitPopT ?? 0,
+    splitPopDur: e.splitPopDur ?? 0,
+  };
+}
+
+function snapBasicPos(o) {
+  if (!o) return null;
+  return {
+    x: o.x,
+    y: o.y,
+    vx: o.vx,
+    vy: o.vy,
+    r: o.r,
+    rot: o.rot,
+    kind: o.kind,
+    tier: o.tier,
+    value: o.value,
+    life: o.life,
+    maxLife: o.maxLife,
+    floatPhase: o.floatPhase,
+    sprite: o.sprite,
+    tint: o.tint,
+    phase: o.phase,
+    frame: o.frame,
+    second: o.second,
+    maxLife2: o.maxLife2,
+    ang: o.ang,
+    baseAng: o.baseAng,
+    lines: o.lines,
+    len: o.len,
+    elapsed: o.elapsed,
+    r2: o.r2,
+    seed: o.seed,
+    boltDur: o.boltDur,
+    impactDur: o.impactDur,
+    maxLifeStrike: o.maxLifeStrike,
+  };
+}
+
 function safeJson(obj) {
   try {
     return JSON.parse(
@@ -160,25 +217,26 @@ export function buildGameSnapshot(game) {
     viewWorldScale: CONFIG.VIEW_WORLD_SCALE ?? 1,
     magnetT: game.magnetT ?? 0,
     ev: Array.isArray(netEvents) && netEvents.length ? netEvents : undefined,
+    // Compact net payloads (joiner FPS + latency).
     players: (game.players ?? []).map(snapPlayer),
-    enemies: safeJson(game.enemies ?? []) ?? [],
-    projectiles: safeJson(game.projectiles ?? []) ?? [],
-    bossArcaneProjs: safeJson(game.bossArcaneProjs ?? []) ?? [],
-    bossPulses: safeJson(game.bossPulses ?? []) ?? [],
-    xpOrbs: safeJson(game.xpOrbs ?? []) ?? [],
-    pickups: safeJson(game.pickups ?? []) ?? [],
-    daggers: safeJson(game.daggers ?? []) ?? [],
-    throwingAxes: safeJson(game.throwingAxes ?? []) ?? [],
-    boomerangs: safeJson(game.boomerangs ?? []) ?? [],
-    lightningStrikes: safeJson(game.lightningStrikes ?? []) ?? [],
+    enemies: (game.enemies ?? []).map(snapEnemy).filter(Boolean),
+    projectiles: (game.projectiles ?? []).map(snapBasicPos).filter(Boolean),
+    bossArcaneProjs: (game.bossArcaneProjs ?? []).map(snapBasicPos).filter(Boolean),
+    bossPulses: (game.bossPulses ?? []).map(snapBasicPos).filter(Boolean),
+    xpOrbs: (game.xpOrbs ?? []).map((o) => ({ x: o.x, y: o.y, tier: o.tier, value: o.value, floatPhase: o.floatPhase })).filter(Boolean),
+    pickups: (game.pickups ?? []).map((p) => ({ kind: p.kind, x: p.x, y: p.y, life: p.life, maxLife: p.maxLife, floatPhase: p.floatPhase })).filter(Boolean),
+    daggers: (game.daggers ?? []).map((d) => ({ x: d.x, y: d.y, vx: d.vx, vy: d.vy })).filter(Boolean),
+    throwingAxes: (game.throwingAxes ?? []).map((a) => ({ x: a.x, y: a.y, rot: a.rot })).filter(Boolean),
+    boomerangs: (game.boomerangs ?? []).map((b) => ({ x: b.x, y: b.y, rot: b.rot })).filter(Boolean),
+    lightningStrikes: (game.lightningStrikes ?? []).map((s) => ({ x: s.x, y: s.y, life: s.life, maxLife: s.maxLife, seed: s.seed, boltDur: s.boltDur, impactDur: s.impactDur })).filter(Boolean),
     hammers: safeJson(game.hammers ?? []) ?? [],
     arcaneRunes: safeJson(game.arcaneRunes ?? []) ?? [],
-    toxicGrenades: safeJson(game.toxicGrenades ?? []) ?? [],
-    toxicExplosions: safeJson(game.toxicExplosions ?? []) ?? [],
-    toxicClouds: safeJson(game.toxicClouds ?? []) ?? [],
-    groundSlams: safeJson(game.groundSlams ?? []) ?? [],
-    soulRipProjectiles: safeJson(game.soulRipProjectiles ?? []) ?? [],
-    slashes: safeJson(game.slashes ?? []) ?? [],
+    toxicGrenades: (game.toxicGrenades ?? []).map((g) => ({ x: g.x, y: g.y, rot: g.rot, life: g.life, maxLife: g.maxLife })).filter(Boolean),
+    toxicExplosions: (game.toxicExplosions ?? []).map((ex) => ({ x: ex.x, y: ex.y, frame: ex.frame, life: ex.life, maxLife: ex.maxLife })).filter(Boolean),
+    toxicClouds: (game.toxicClouds ?? []).map((c) => ({ x: c.x, y: c.y, life: c.life, maxLife: c.maxLife })).filter(Boolean),
+    groundSlams: (game.groundSlams ?? []).map((s) => ({ x: s.x, y: s.y, r: s.r, life: s.life, maxLife: s.maxLife, second: s.second })).filter(Boolean),
+    soulRipProjectiles: (game.soulRipProjectiles ?? []).map((p) => ({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, life: p.life, maxLife: p.maxLife })).filter(Boolean),
+    slashes: (game.slashes ?? []).map((s) => ({ x: s.x, y: s.y, ang: s.ang, life: s.life, maxLife: s.maxLife, range: s.range })).filter(Boolean),
     bossMilestones: safeJson(game.bossMilestones) ?? { boss1: false, boss2: false },
   };
 }
@@ -224,6 +282,11 @@ export function applyGameSnapshot(game, snap) {
   // Apply authoritative damage feedback events (client spawns local visuals).
   if (game?.netMode === "client" && typeof game.netApplyDamageEvents === "function") {
     game.netApplyDamageEvents(snap.ev, mpDebug);
+  }
+
+  // Online client: apply snapshot as *targets*; interpolate in render loop for smooth joiner experience.
+  if (game?.netMode === "client" && typeof game.netApplyWorldTargets === "function") {
+    game.netApplyWorldTargets(snap);
   }
 
   const pls = snap.players ?? [];
@@ -281,24 +344,27 @@ export function applyGameSnapshot(game, snap) {
     game.stats = game.player.stats;
   }
 
-  game.enemies = takeSnapArray(snap.enemies);
-  game.projectiles = takeSnapArray(snap.projectiles);
-  game.bossArcaneProjs = takeSnapArray(snap.bossArcaneProjs);
-  game.bossPulses = takeSnapArray(snap.bossPulses);
-  game.xpOrbs = takeSnapArray(snap.xpOrbs);
-  game.pickups = takeSnapArray(snap.pickups);
-  game.daggers = takeSnapArray(snap.daggers);
-  game.throwingAxes = takeSnapArray(snap.throwingAxes);
-  game.boomerangs = takeSnapArray(snap.boomerangs);
-  game.lightningStrikes = takeSnapArray(snap.lightningStrikes);
-  game.hammers = takeSnapArray(snap.hammers);
-  game.arcaneRunes = takeSnapArray(snap.arcaneRunes);
-  game.toxicGrenades = takeSnapArray(snap.toxicGrenades);
-  game.toxicExplosions = takeSnapArray(snap.toxicExplosions);
-  game.toxicClouds = takeSnapArray(snap.toxicClouds);
-  game.groundSlams = takeSnapArray(snap.groundSlams);
-  game.soulRipProjectiles = takeSnapArray(snap.soulRipProjectiles);
-  game.slashes = takeSnapArray(snap.slashes);
+  // Host/solo still hard-apply arrays. Client interpolates, so avoid snapping & large allocations here.
+  if (game?.netMode !== "client") {
+    game.enemies = takeSnapArray(snap.enemies);
+    game.projectiles = takeSnapArray(snap.projectiles);
+    game.bossArcaneProjs = takeSnapArray(snap.bossArcaneProjs);
+    game.bossPulses = takeSnapArray(snap.bossPulses);
+    game.xpOrbs = takeSnapArray(snap.xpOrbs);
+    game.pickups = takeSnapArray(snap.pickups);
+    game.daggers = takeSnapArray(snap.daggers);
+    game.throwingAxes = takeSnapArray(snap.throwingAxes);
+    game.boomerangs = takeSnapArray(snap.boomerangs);
+    game.lightningStrikes = takeSnapArray(snap.lightningStrikes);
+    game.hammers = takeSnapArray(snap.hammers);
+    game.arcaneRunes = takeSnapArray(snap.arcaneRunes);
+    game.toxicGrenades = takeSnapArray(snap.toxicGrenades);
+    game.toxicExplosions = takeSnapArray(snap.toxicExplosions);
+    game.toxicClouds = takeSnapArray(snap.toxicClouds);
+    game.groundSlams = takeSnapArray(snap.groundSlams);
+    game.soulRipProjectiles = takeSnapArray(snap.soulRipProjectiles);
+    game.slashes = takeSnapArray(snap.slashes);
+  }
   if (snap.bossMilestones && typeof snap.bossMilestones === "object") {
     game.bossMilestones = { ...game.bossMilestones, ...snap.bossMilestones };
   }

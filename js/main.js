@@ -47,6 +47,29 @@ let gPendingClientSnap = null;
 /** When client's game.mode/pending upgrades change, rebuild pause/level overlays to match host. */
 let gLastClientOverlaySig = null;
 
+let gMpDebugEl = null;
+function ensureMpDebugOverlay() {
+  if (gMpDebugEl) return gMpDebugEl;
+  const el = document.createElement("div");
+  el.id = "mp-debug";
+  el.style.position = "fixed";
+  el.style.left = "10px";
+  el.style.top = "10px";
+  el.style.zIndex = "999";
+  el.style.padding = "8px 10px";
+  el.style.borderRadius = "10px";
+  el.style.background = "rgba(0,0,0,0.55)";
+  el.style.border = "1px solid rgba(255,255,255,0.12)";
+  el.style.color = "rgba(240,232,255,0.92)";
+  el.style.font = "12px/1.25 system-ui, Segoe UI, sans-serif";
+  el.style.pointerEvents = "none";
+  el.style.whiteSpace = "pre";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  gMpDebugEl = el;
+  return el;
+}
+
 configureJamRedirectHooks(() => {
   try {
     if (gOnlineSession?.socket) {
@@ -1235,6 +1258,37 @@ async function main() {
       const dt = Math.min(0.05, now - last);
       last = now;
 
+      // Online debug overlay + reconnect hint (client/joiner focused).
+      if (gOnlineSession && game.netMode !== "solo") {
+        const el = ensureMpDebugOverlay();
+        if (MULTIPLAYER_DEBUG) el.style.display = "block";
+        const sock = gOnlineSession.socket;
+        const pingMs = Number(sock?.io?.engine?.ping ?? NaN);
+        const recvAgoMs =
+          game.netMode === "client" && Number.isFinite(game?._netLastSnapRecvMs)
+            ? Math.max(0, performance.now() - game._netLastSnapRecvMs)
+            : NaN;
+        const rec = game.netMode === "client" && Number.isFinite(recvAgoMs) && recvAgoMs > 2000;
+        if (rec && hint) {
+          hint.textContent = "Reconnecting…";
+          hint.style.display = "";
+          hint.style.opacity = "0.9";
+        }
+        if (MULTIPLAYER_DEBUG) {
+          const inputN = gOnlineSession._dbgInputN ?? 0;
+          gOnlineSession._dbgInputN = 0;
+          const evN = Array.isArray(gPendingClientSnap?.ev) ? gPendingClientSnap.ev.length : 0;
+          el.textContent =
+            `role=${gOnlineSession.role} host=${game.netMode === "host"}\\n` +
+            `room=${gOnlineSession.roomCode ?? ""} seat=${gOnlineSession.mySeat ?? gOnlineSession.hostSeat ?? ""}\\n` +
+            `socket=${sock?.id ?? ""} ping=${Number.isFinite(pingMs) ? pingMs : "-"}ms\\n` +
+            `snapAgo=${Number.isFinite(recvAgoMs) ? Math.round(recvAgoMs) : "-"}ms ev=${evN}\\n` +
+            `inputSend=${inputN}/frame`;
+        }
+      } else if (gMpDebugEl) {
+        gMpDebugEl.style.display = "none";
+      }
+
       if (gPendingClientSnap && game.netMode === "client") {
         applyGameSnapshot(game, gPendingClientSnap);
         gPendingClientSnap = null;
@@ -1265,19 +1319,18 @@ async function main() {
           0,
           Math.min(3, Math.floor(Number(gOnlineSession.mySeat) || 0))
         );
-        const m = getMovement(seat);
-        const prev = gOnlineSession.lastEmittedInput;
-        const tol = 0.004;
-        if (
-          !prev ||
-          Math.abs(m.x - prev.ax) > tol ||
-          Math.abs(m.y - prev.ay) > tol
-        ) {
-          gOnlineSession.lastEmittedInput = { ax: m.x, ay: m.y };
+        gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
+        const sendDt = 1 / 30;
+        if (gOnlineSession.inputAcc >= sendDt) {
+          gOnlineSession.inputAcc = 0;
+          const m = getMovement(seat);
           try {
             gOnlineSession.socket.emit("game:input", { ax: m.x, ay: m.y });
           } catch {
             //
+          }
+          if (MULTIPLAYER_DEBUG) {
+            gOnlineSession._dbgInputN = (gOnlineSession._dbgInputN ?? 0) + 1;
           }
         }
       }

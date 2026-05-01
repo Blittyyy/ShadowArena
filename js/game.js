@@ -1846,16 +1846,21 @@ export class Game {
 
         // Advance short-lived VFX timers locally so they don't "stick" between snapshots.
         this.netTickClientVfx(dt);
-      }
 
-      if (
-        this.mode === "playing" &&
-        Number.isFinite(this.netReplayCamX) &&
-        Number.isFinite(this.netReplayCamY)
-      ) {
-        const k = 1 - Math.exp(-(CONFIG.CAMERA_SMOOTH ?? 12) * dt);
-        this.camX += (this.netReplayCamX - this.camX) * k;
-        this.camY += (this.netReplayCamY - this.camY) * k;
+        // Smooth world entities toward latest snapshot targets.
+        this.netInterpolateWorld(dt);
+
+        // Camera: follow local player smoothly (do not snap to host camera).
+        const lp = this.players?.[localSeat];
+        if (lp) {
+          const tx = lp.x - viewWorldW() / 2;
+          const ty = lp.y - viewWorldH() / 2;
+          const kCam = 1 - Math.exp(-(CONFIG.CAMERA_SMOOTH ?? 12) * dt);
+          this.camX += (tx - this.camX) * kCam;
+          this.camY += (ty - this.camY) * kCam;
+          this.camTargetX = tx;
+          this.camTargetY = ty;
+        }
       }
       if (this.mode === "playing") this.updateVibeJamPortals(dt);
       return;
@@ -4176,6 +4181,134 @@ export class Game {
         }
       }
     }
+  }
+
+  netApplyWorldTargets(snap) {
+    const recvMs = Number(snap?.__recvMs ?? snap?.__srvMs ?? NaN);
+    const t = Number.isFinite(recvMs) ? recvMs : performance.now();
+    this._netLastSnapRecvMs = t;
+
+    // Enemies (id-based).
+    this._netEnemyTgt ??= new Map();
+    const tgt = this._netEnemyTgt;
+    tgt.clear();
+    for (const e of snap.enemies ?? []) {
+      if (!e || typeof e.id !== "number") continue;
+      tgt.set(e.id, e);
+    }
+
+    // Apply/merge into rendered enemies array without rebuilding.
+    const arr = this.enemies ?? (this.enemies = []);
+    // Mark seen
+    for (const e of arr) if (e && typeof e.id === "number") e._netSeen = false;
+    for (const [id, se] of tgt) {
+      let local = null;
+      for (let i = 0; i < arr.length; i++) {
+        const le = arr[i];
+        if (le && le.id === id) {
+          local = le;
+          break;
+        }
+      }
+      if (!local) {
+        // New enemy: spawn rendered copy at target position (no snap across screen).
+        local = { ...se };
+        arr.push(local);
+      } else {
+        // Update non-pos state; pos becomes target.
+        local.typeId = se.typeId;
+        local.hp = se.hp;
+        local.maxHp = se.maxHp;
+        local.hitFlash = Math.max(local.hitFlash ?? 0, se.hitFlash ?? 0);
+        local.animPhase = se.animPhase ?? local.animPhase;
+        local.necSummonT = se.necSummonT ?? 0;
+        local.necMoving = se.necMoving ?? false;
+        local.necFacingRight = se.necFacingRight ?? false;
+        local.beastState = se.beastState ?? local.beastState;
+        local.bossAnimKey = se.bossAnimKey ?? local.bossAnimKey;
+        local.bossAnimFrame = se.bossAnimFrame ?? local.bossAnimFrame;
+        local.splitPopT = se.splitPopT ?? local.splitPopT;
+        local.splitPopDur = se.splitPopDur ?? local.splitPopDur;
+      }
+      local._netTx = se.x;
+      local._netTy = se.y;
+      local._netSeen = true;
+    }
+    // Remove enemies not present anymore (avoid growing forever).
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const e = arr[i];
+      if (!e || typeof e.id !== "number") continue;
+      if (e._netSeen === false) arr.splice(i, 1);
+    }
+
+    // Index-based arrays (projectiles/pickups/xp) — lightweight.
+    this._netIdxTargets = this._netIdxTargets ?? {};
+    this._netIdxTargets.projectiles = snap.projectiles ?? [];
+    this._netIdxTargets.bossArcaneProjs = snap.bossArcaneProjs ?? [];
+    this._netIdxTargets.toxicGrenades = snap.toxicGrenades ?? [];
+    this._netIdxTargets.toxicExplosions = snap.toxicExplosions ?? [];
+    this._netIdxTargets.daggers = snap.daggers ?? [];
+    this._netIdxTargets.throwingAxes = snap.throwingAxes ?? [];
+    this._netIdxTargets.boomerangs = snap.boomerangs ?? [];
+    this._netIdxTargets.pickups = snap.pickups ?? [];
+    this._netIdxTargets.xpOrbs = snap.xpOrbs ?? [];
+    this._netIdxTargets.groundSlams = snap.groundSlams ?? [];
+    this._netIdxTargets.slashes = snap.slashes ?? [];
+    this._netIdxTargets.soulRipProjectiles = snap.soulRipProjectiles ?? [];
+    this._netIdxTargets.lightningStrikes = snap.lightningStrikes ?? [];
+  }
+
+  netInterpolateWorld(dt) {
+    // Smooth toward targets; keep 60fps render regardless of 20Hz snapshots.
+    const k = 18; // responsiveness constant (higher = snappier)
+    const a = 1 - Math.exp(-k * dt);
+
+    // Enemies.
+    for (const e of this.enemies ?? []) {
+      if (!e) continue;
+      const tx = e._netTx;
+      const ty = e._netTy;
+      if (Number.isFinite(tx) && Number.isFinite(ty)) {
+        e.x += (tx - e.x) * a;
+        e.y += (ty - e.y) * a;
+      }
+    }
+
+    const lerpIdx = (key, list, copyFn) => {
+      const tgt = this._netIdxTargets?.[key];
+      if (!Array.isArray(tgt)) return;
+      if (!Array.isArray(list)) return;
+      // Resize quickly to match, but keep objects stable when possible.
+      while (list.length < tgt.length) list.push(copyFn(tgt[list.length]));
+      while (list.length > tgt.length) list.pop();
+      for (let i = 0; i < tgt.length; i++) {
+        const t = tgt[i];
+        const o = list[i];
+        if (!t || !o) continue;
+        if (Number.isFinite(t.x) && Number.isFinite(t.y)) {
+          o.x += (t.x - o.x) * a;
+          o.y += (t.y - o.y) * a;
+        }
+        // Copy a few render-relevant fields without realloc.
+        for (const f of ["vx","vy","r","rot","kind","tier","value","life","maxLife","floatPhase","sprite","tint","phase","frame","second","ang","baseAng","lines","len","elapsed","seed","boltDur","impactDur"]) {
+          if (t[f] !== undefined) o[f] = t[f];
+        }
+      }
+    };
+
+    lerpIdx("projectiles", this.projectiles, (t) => ({ ...t }));
+    lerpIdx("bossArcaneProjs", this.bossArcaneProjs, (t) => ({ ...t }));
+    lerpIdx("toxicGrenades", this.toxicGrenades, (t) => ({ ...t }));
+    lerpIdx("toxicExplosions", this.toxicExplosions, (t) => ({ ...t }));
+    lerpIdx("daggers", this.daggers, (t) => ({ ...t }));
+    lerpIdx("throwingAxes", this.throwingAxes, (t) => ({ ...t }));
+    lerpIdx("boomerangs", this.boomerangs, (t) => ({ ...t }));
+    lerpIdx("pickups", this.pickups, (t) => ({ ...t }));
+    lerpIdx("xpOrbs", this.xpOrbs, (t) => ({ ...t }));
+    lerpIdx("groundSlams", this.groundSlams, (t) => ({ ...t }));
+    lerpIdx("slashes", this.slashes, (t) => ({ ...t }));
+    lerpIdx("soulRipProjectiles", this.soulRipProjectiles, (t) => ({ ...t }));
+    lerpIdx("lightningStrikes", this.lightningStrikes, (t) => ({ ...t }));
   }
 
   /**
