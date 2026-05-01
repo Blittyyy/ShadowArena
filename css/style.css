@@ -480,15 +480,31 @@ html, body {
   }
 }
 
-/* Touch: slightly tighter stack so thumb reach + less overflow vs desktop art anchors */
-@media (pointer: coarse) {
-  #overlay-menu.overlay {
-    padding-bottom: max(clamp(28px, 8vh, 96px), env(safe-area-inset-bottom, 0px) + 12px);
-  }
+/* Touch-first devices only (see `is-touch-game-chrome` on html — avoids hybrid laptops). */
+html.is-touch-game-chrome #overlay-menu.overlay {
+  padding-bottom: max(clamp(20px, 6vh, 80px), env(safe-area-inset-bottom, 0px) + 12px);
+  padding-top: max(env(safe-area-inset-top, 0px), 8px);
+}
 
-  #overlay-menu .menu-actions {
-    gap: 11px;
-  }
+html.is-touch-game-chrome #overlay-menu .menu-actions {
+  gap: 9px;
+}
+
+html.is-touch-game-chrome #overlay-menu .menu-btn {
+  min-height: 48px;
+  width: min(280px, 86vw);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  padding: 0 14px;
+}
+
+/* Keep menu stack below baked title art; allow scroll if still tight (landscape). */
+html.is-touch-game-chrome #overlay-menu .menu-shell {
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(100px, 28vmin, 220px));
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - clamp(100px, 28vmin, 220px));
+  overflow-y: auto;
+  width: min(760px, calc(100% - 22px));
 }
 
 .menu-bones-canvas {
@@ -765,9 +781,13 @@ html, body {
     0 28px 90px rgba(0, 0, 0, 0.72),
     0 0 0 1px rgba(155, 109, 255, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  /* Fit everything on screen (no scrolling). */
-  max-height: calc(100vh - 24px);
-  overflow: hidden;
+  /* Dynamic viewport — scroll when content exceeds (mobile browsers, notches). */
+  max-height: min(920px, calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px));
+  max-height: min(920px, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 
 .character-select-vignette {
@@ -1273,6 +1293,134 @@ html, body {
   text-align: center;
   font-size: 11px;
   color: rgba(215, 200, 245, 0.78);
+}
+
+.character-mp-controls .mp-hint .mp-hint-touch {
+  display: none;
+}
+
+html.is-touch-game-chrome .character-mp-controls .mp-hint .mp-hint-keys {
+  display: none !important;
+}
+
+html.is-touch-game-chrome .character-mp-controls .mp-hint .mp-hint-touch {
+  display: block !important;
+}
+
+/* --------- Character select: touch-first layout (narrow + short — scroll inside shell) --------- */
+html.is-touch-game-chrome #overlay-character-select .character-select-shell {
+  width: calc(100vw - 14px);
+  max-width: min(1080px, calc(100vw - 14px));
+  padding: 10px 8px 12px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-select-header {
+  margin-bottom: 6px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-select-header h2 {
+  font-size: clamp(17px, 5vw, 24px);
+  line-height: 1.12;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-select-header .sub {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+html.is-touch-game-chrome #overlay-character-select .online-charselect-panel {
+  width: 100%;
+  padding: 8px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-grid-premium {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 4px 0 8px;
+  flex-wrap: wrap;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-card-premium {
+  width: 100%;
+  max-width: none;
+  flex: none;
+  height: auto;
+  min-height: 0;
+  padding: 10px 8px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-card-premium:not(.selected):hover,
+html.is-touch-game-chrome #overlay-character-select .character-card-premium:not(.selected):focus-visible {
+  transform: none;
+  filter: none;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-card-premium.selected,
+html.is-touch-game-chrome #overlay-character-select .character-card-premium.selected:hover,
+html.is-touch-game-chrome #overlay-character-select .character-card-premium.selected:focus-visible {
+  transform: none;
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-sprite {
+  height: min(118px, 28vw);
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-name {
+  font-size: 14px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-role {
+  font-size: 11px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-stats {
+  margin-top: 6px;
+  gap: 4px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-stat .lbl {
+  font-size: 9px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .cc-stat .bar {
+  height: 6px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-actions-premium {
+  margin-top: 10px;
+  gap: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-actions-premium .btn-confirm-premium,
+html.is-touch-game-chrome #overlay-character-select .character-actions-premium .btn-secondary,
+html.is-touch-game-chrome #overlay-character-select .character-actions-premium button {
+  touch-action: manipulation;
+  min-height: 48px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .mp-player-slots {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: calc(100% - 8px);
+}
+
+html.is-touch-game-chrome #overlay-character-select .mp-slot {
+  padding: 8px;
+}
+
+html.is-touch-game-chrome #overlay-character-select .mp-slot .mp-controls,
+html.is-touch-game-chrome #overlay-character-select .mp-slot .mp-confirm {
+  white-space: normal;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+html.is-touch-game-chrome #overlay-character-select .character-mp-controls {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* No-scroll layout: scale sections by viewport height. */

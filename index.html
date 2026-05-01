@@ -8,7 +8,7 @@
   />
   <title>Shadow Arena — Survival</title>
   <link rel="icon" type="image/png" href="favicon.ico" />
-  <link rel="stylesheet" href="css/style.css?v=2026-04-30-mobile-menu" />
+  <link rel="stylesheet" href="css/style.css?v=2026-04-30-touch-layout" />
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
   <script>
     // Room server on Railway — full https origin, no trailing slash. Leave empty on localhost so dev uses 127.0.0.1:8787.
@@ -205,7 +205,10 @@
               <button type="button" class="mp-seg-btn" data-player-count="4">4</button>
             </div>
           </div>
-          <div class="mp-hint">Local co-op: P1 WASD, P2 Arrows, P3 IJKL, P4 TFGH</div>
+          <div class="mp-hint">
+            <span class="mp-hint-keys">Local co-op: P1 WASD, P2 Arrows, P3 IJKL, P4 TFGH</span>
+            <span class="mp-hint-touch">Uses the touch stick in-game. Tap Ready on each slot when set.</span>
+          </div>
         </div>
 
         <div id="character-grid" class="character-grid character-grid-premium" role="list">
@@ -375,6 +378,6 @@
     <div id="hint" class="hint">WASD move · Esc pause</div>
   </div>
     <script async src="https://vibejam.cc/2026/widget.js"></script>
-    <script type="module" src="js/main.js?v=2026-04-30-mobile-controls"></script>
+    <script type="module" src="js/main.js?v=2026-04-30-touch-layout"></script>
 </body>
 </html>

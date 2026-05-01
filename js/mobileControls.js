@@ -6,17 +6,42 @@ import {
   setMobileInteractPressed,
 } from "./input.js";
 
+/**
+ * True for touch-first UIs (phones/tablets). False for typical desktop/laptop mice,
+ * even if a touchscreen is present (those usually expose `pointer: fine` + `hover: hover`
+ * alongside coarse — we require `hover: none` so gameplay FAB/stick stays off PC).
+ */
 export function prefersMobileGameChrome() {
   if (typeof window === "undefined") return false;
   try {
-    if (window.matchMedia("(pointer: coarse)").matches) return true;
-    if (window.matchMedia("(hover: none)").matches && window.matchMedia("(max-width: 900px)").matches)
-      return true;
+    return (
+      window.matchMedia("(pointer: coarse)").matches && window.matchMedia("(hover: none)").matches
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Keep CSS / dynamic UI in sync with {@link prefersMobileGameChrome}. */
+export function syncTouchGameChromeDomClass() {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("is-touch-game-chrome", prefersMobileGameChrome());
+}
+
+function installTouchGameChromeClassHooks() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+  const recalc = () => syncTouchGameChromeDomClass();
+  recalc();
+  try {
+    for (const q of ["(pointer: coarse)", "(hover: none)", "(pointer: fine)"]) {
+      window.matchMedia(q).addEventListener("change", recalc);
+    }
   } catch {
     //
   }
-  return false;
 }
+
+installTouchGameChromeClassHooks();
 
 /** @typedef {{ screen: string; game: object | null }} Runtime */
 

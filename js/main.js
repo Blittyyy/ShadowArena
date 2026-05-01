@@ -9,7 +9,7 @@ import {
 import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-04-30-net-jitter-1";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-04-30-net-jitter-1";
+import { Game } from "./game.js?v=2026-04-30-touch-layout";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -25,7 +25,7 @@ import {
   ingestJamInboundUrl,
   loadForwardBagFromStorage,
 } from "./net/vibeJamPortal.js?v=2026-04-30-portal-webring-1";
-import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-mobile-1";
+import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-touch-layout";
 
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
@@ -802,6 +802,25 @@ async function main() {
   const MP_CONFIRM_CODE = ["Space", "Enter", "KeyU", "KeyR"];
   const MP_LEFT_CODE = ["KeyA", "ArrowLeft", "KeyJ", "KeyF"];
   const MP_RIGHT_CODE = ["KeyD", "ArrowRight", "KeyL", "KeyH"];
+
+  const mpTouchChromeActive = () =>
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("is-touch-game-chrome");
+
+  function touchChromeMpControlsLine(slotIndex) {
+    if (!mpTouchChromeActive()) {
+      return `Move: ${MP_CONTROLS_LABEL[slotIndex] ?? ""} • L/R to change`;
+    }
+    return "Tap champion cards • pick your class";
+  }
+
+  function touchChromeMpConfirmLine(slotIndex) {
+    if (!mpTouchChromeActive()) {
+      return `Confirm: ${MP_CONFIRM_LABEL[slotIndex] ?? ""} (toggle)`;
+    }
+    return "Tap Ready below when set";
+  }
+
   /** True when opened from Characters (codex only); false when opened from Start (pick + confirm). */
   let characterSelectBrowseOnly = false;
   /** Codex browse focus; null until the user taps a card (preview stays empty until then). */
@@ -900,8 +919,8 @@ async function main() {
           <div class="mp-portrait"><img alt="" /></div>
           <div class="mp-meta">
             <div class="mp-name">${cid[0].toUpperCase() + cid.slice(1)}</div>
-            <div class="mp-controls">Move: ${MP_CONTROLS_LABEL[i] ?? ""} • L/R to change</div>
-            <div class="mp-confirm">Confirm: ${MP_CONFIRM_LABEL[i] ?? ""} (toggle)</div>
+            <div class="mp-controls">${touchChromeMpControlsLine(i)}</div>
+            <div class="mp-confirm">${touchChromeMpConfirmLine(i)}</div>
           </div>
         </div>
         <button type="button" class="mp-ready-btn" data-ready-btn="${i}">

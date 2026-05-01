@@ -4552,7 +4552,12 @@ export class Game {
     const raw = window.devicePixelRatio || 1;
     let cap = CONFIG.CANVAS_MAX_DPR ?? 2;
     try {
-      if (window.matchMedia("(pointer: coarse)").matches) cap = Math.min(cap, 2);
+      if (
+        window.matchMedia("(pointer: coarse)").matches &&
+        window.matchMedia("(hover: none)").matches
+      ) {
+        cap = Math.min(cap, 2);
+      }
     } catch {
       //
     }
