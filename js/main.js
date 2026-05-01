@@ -31,6 +31,8 @@ try {
 let gOnlineSession = null;
 /** @type {object | null} */
 let gPendingClientSnap = null;
+/** When client's game.mode/pending upgrades change, rebuild pause/level overlays to match host. */
+let gLastClientOverlaySig = null;
 
 const canvas = document.getElementById("game");
 const xpFill = document.getElementById("xp-fill");
@@ -1104,6 +1106,7 @@ async function main() {
       }
       gOnlineSession = null;
       gPendingClientSnap = null;
+      gLastClientOverlaySig = null;
       clearOnlineInputBridge();
       started = false;
       game = null;
@@ -1132,6 +1135,12 @@ async function main() {
       if (gPendingClientSnap && game.netMode === "client") {
         applyGameSnapshot(game, gPendingClientSnap);
         gPendingClientSnap = null;
+        const pendIds = (game.pendingUpgrades ?? []).map((u) => u?.id ?? "").join(",");
+        const sig = `${game.mode}|${game.upgradePlayerIndex}|${pendIds}|${game.endedByQuit ? "1" : "0"}`;
+        if (sig !== gLastClientOverlaySig) {
+          gLastClientOverlaySig = sig;
+          refreshOverlays(game);
+        }
       }
 
       game.update(dt);
@@ -1151,7 +1160,11 @@ async function main() {
         gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
         if (gOnlineSession.inputAcc >= 0.04) {
           gOnlineSession.inputAcc = 0;
-          const m = getMovement(0);
+          const seat = Math.max(
+            0,
+            Math.min(3, Math.floor(Number(gOnlineSession.mySeat) || 0))
+          );
+          const m = getMovement(seat);
           try {
             gOnlineSession.socket.emit("game:input", { ax: m.x, ay: m.y });
           } catch {
@@ -1197,6 +1210,7 @@ async function main() {
     clearOnlineInputBridge();
     gOnlineSession = null;
     gPendingClientSnap = null;
+    gLastClientOverlaySig = null;
 
     window.selectedCharacters = mpCharIndex.map((i) => MP_CHAR_ORDER[i] ?? "mage");
     window.selectedCharacter = window.selectedCharacters[0] ?? selectedCharacter;
@@ -1226,6 +1240,7 @@ async function main() {
     started = true;
     setScreen("game");
     gPendingClientSnap = null;
+    gLastClientOverlaySig = null;
 
     const sorted = [...roster].sort((a, b) => a.seat - b.seat);
     window.selectedCharacters = sorted.map((r) => r.characterId);
@@ -1274,6 +1289,7 @@ async function main() {
     started = true;
     setScreen("game");
     gPendingClientSnap = null;
+    gLastClientOverlaySig = null;
 
     const sorted = [...roster].sort((a, b) => a.seat - b.seat);
     window.selectedCharacters = sorted.map((r) => r.characterId);
