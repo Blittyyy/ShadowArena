@@ -4,12 +4,22 @@
 import { CONFIG } from "../config.js?v=2026-04-30-coop-vs-balance-1";
 import { findUpgradeById } from "../upgrades.js";
 
-/** Joiner local-vs-host XY: corrections below this (px) are ignored (feel-first). */
-export const JOINER_RECON_DEADZONE_PX = 20;
+/** No XY correction below this gap when idle (released input). Host settle when stopped. */
+export const JOINER_RECON_DEADZONE_IDLE_PX = 22;
+/**
+ * Wider ignore band while steering (prediction ahead of delayed host snapshots).
+ * Kills constant “golden tee” tug in the ~30–50px Sprint error band without huge drift.
+ */
+export const JOINER_RECON_DEADZONE_MOVING_PX = 56;
 /** Above this gap (px), snap to host XY once (large desync / collision mismatch). */
-export const JOINER_RECON_SNAP_PX = 80;
-/** Between deadzone and snap: per-frame fractional correction (`dx * alpha`). ~20–80px band. */
-export const JOINER_RECON_SOFT_ALPHA = 0.03;
+export const JOINER_RECON_SNAP_PX = 102;
+/** Soft blend in the Mid band while moving (multiply error per frame); keep low → less tug. */
+export const JOINER_RECON_SOFT_ALPHA_MOVING = 0.012;
+/** Faster blend when idle and above idle dead zone (settles leftover error after releasing). */
+export const JOINER_RECON_SOFT_ALPHA_IDLE = 0.042;
+
+/** @deprecated Prefer JOINER_RECON_DEADZONE_IDLE_PX / MOVING — kept for tooling */
+export const JOINER_RECON_DEADZONE_PX = JOINER_RECON_DEADZONE_IDLE_PX;
 export const INTERPOLATION_DELAY_MS = 120;
 
 function snapEnemy(e) {

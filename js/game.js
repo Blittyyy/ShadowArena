@@ -4,10 +4,12 @@ import { clamp, dist, angle, randRange } from "./mathutil.js";
 import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
 import {
   INTERPOLATION_DELAY_MS,
-  JOINER_RECON_DEADZONE_PX,
-  JOINER_RECON_SOFT_ALPHA,
+  JOINER_RECON_DEADZONE_IDLE_PX,
+  JOINER_RECON_DEADZONE_MOVING_PX,
+  JOINER_RECON_SOFT_ALPHA_IDLE,
+  JOINER_RECON_SOFT_ALPHA_MOVING,
   JOINER_RECON_SNAP_PX,
-} from "./net/snapshotSync.js?v=2026-05-02-joiner-recon";
+} from "./net/snapshotSync.js?v=2026-05-02-less-tug-feel";
 import {
   drawPlayer,
   drawXpOrb,
@@ -3986,8 +3988,9 @@ export class Game {
   }
 
   /**
-   * Joiner only: reconcile predicted XY toward latest host sample (feel-first thresholds).
-   * — ≤ deadzone: no correction —  deadzone–snap: tiny per-frame blend — > snap: teleport once.
+   * Joiner only: reconcile predicted XY toward latest host sample.
+   * While steering we use a wider deadzone + weaker alpha (“host trails you” latency); idle uses a
+   * tighter deadzone so you still settle cleanly when releasing input.
    */
   netReconcileLocalPlayer(dt, seat) {
     const p = this.players?.[seat];
@@ -4001,7 +4004,14 @@ export class Game {
     const d = Math.hypot(dx, dy);
     this._netLastReconcileD = d;
 
-    if (d <= JOINER_RECON_DEADZONE_PX) {
+    const inp = typeof this.netGetLocalInput === "function" ? this.netGetLocalInput() : null;
+    const inputMag = inp ? Math.hypot(inp.x ?? 0, inp.y ?? 0) : 0;
+    const steering = inputMag >= 0.07;
+
+    const deadPx = steering ? JOINER_RECON_DEADZONE_MOVING_PX : JOINER_RECON_DEADZONE_IDLE_PX;
+    const softA = steering ? JOINER_RECON_SOFT_ALPHA_MOVING : JOINER_RECON_SOFT_ALPHA_IDLE;
+
+    if (d <= deadPx) {
       this._netMismatchLogAcc = 0;
       return;
     }
@@ -4013,20 +4023,19 @@ export class Game {
     if (d > JOINER_RECON_SNAP_PX) {
       p.x = sx;
       p.y = sy;
-      if (mpDbg) this._netBumpJoinerMismatchLog(dt, d);
+      if (mpDbg) this._netBumpJoinerMismatchLog(dt, d, deadPx);
       return;
     }
 
-    const a = JOINER_RECON_SOFT_ALPHA;
-    p.x += dx * a;
-    p.y += dy * a;
+    p.x += dx * softA;
+    p.y += dy * softA;
 
-    if (mpDbg) this._netBumpJoinerMismatchLog(dt, d);
+    if (mpDbg) this._netBumpJoinerMismatchLog(dt, d, deadPx);
   }
 
-  /** @param {number} dt @param {number} d */
-  _netBumpJoinerMismatchLog(dt, d) {
-    if (d <= JOINER_RECON_DEADZONE_PX) return;
+  /** @param {number} dt @param {number} d @param {number} deadPx */
+  _netBumpJoinerMismatchLog(dt, d, deadPx) {
+    if (d <= deadPx) return;
     this._netMismatchLogAcc = (this._netMismatchLogAcc ?? 0) + dt;
     if (this._netMismatchLogAcc < 2) return;
     this._netMismatchLogAcc = 0;

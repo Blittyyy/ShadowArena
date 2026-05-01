@@ -6,10 +6,10 @@ import {
   setOnlineHostBridge,
   setHostRemoteMovement,
 } from "./input.js";
-import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-joiner-recon";
+import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-less-tug-feel";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-05-02-joiner-recon";
+import { Game } from "./game.js?v=2026-05-02-less-tug-feel";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -1370,9 +1370,9 @@ async function main() {
           }
         }
 
-        // Steady-state send (~30 Hz); change + stop burst still immediate.
+        // Steady-state 60 Hz: trackball/analog-heavy input matches host tighter (less sluggish/tug wars).
         gOnlineSession.inputAcc = (gOnlineSession.inputAcc ?? 0) + dt;
-        const sendDt = 1 / 30;
+        const sendDt = 1 / 60;
         if (gOnlineSession.inputAcc >= sendDt) {
           gOnlineSession.inputAcc = 0;
           emitInput(m.x, m.y);
