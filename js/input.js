@@ -75,6 +75,20 @@ function keyMapForSeat(i) {
         : { left: "KeyF", right: "KeyH", up: "KeyT", down: "KeyG" };
 }
 
+/** Seat-local interact codes (do not collide with seat movement keys TFGH / IJKL / arrows / WASD). */
+const INTERACT_CODES = ["KeyE", "Comma", "Semicolon", "Quote"];
+
+export function interactHeldForSeat(playerIndex = 0) {
+  const i = Math.max(0, Math.min(3, Math.floor(playerIndex ?? 0)));
+  return keys.has(INTERACT_CODES[i] ?? "KeyE");
+}
+
+export function interactKeyHintForSeat(playerIndex = 0) {
+  const i = Math.max(0, Math.min(3, Math.floor(playerIndex ?? 0)));
+  const sym = ["E", ",", ";", "'"][i];
+  return sym ?? "E";
+}
+
 export function getMovement(playerIndex = 0) {
   const i = Math.max(0, Math.min(3, Math.floor(playerIndex ?? 0)));
 

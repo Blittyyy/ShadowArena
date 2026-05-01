@@ -1,7 +1,7 @@
 import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-04-30-coop-vs-balance-1";
 import { loadAudioSettings } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
 import { clamp, dist, angle, randRange } from "./mathutil.js";
-import { getMovement } from "./input.js";
+import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
 import {
   drawPlayer,
   drawXpOrb,
@@ -34,6 +34,13 @@ import {
 } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
 import { pickThreeUpgrades, createBaseStats } from "./upgrades.js";
 import { sanitizePlayerEntity, sanitizePlayerStats } from "./gameSafety.js?v=2026-04-30-coop-vs-balance-1";
+import {
+  computeExitPortal,
+  computeReturnPortal,
+  hasJamReturnTarget,
+  redirectJamReturn,
+  redirectToVibeJamHub,
+} from "./net/vibeJamPortal.js?v=2026-04-30-portal-webring-1";
 
 /** Lash extends outward along facing; 0..1 → 0..1 (not a rotating sword swipe). */
 function whipGrowU(u) {
@@ -538,6 +545,16 @@ export class Game {
     /** Online client: last replicated camera targets from snapshots (smoothly approached each frame). */
     this.netReplayCamX = NaN;
     this.netReplayCamY = NaN;
+    /** Seat indices controlled by keyboards on THIS machine (solo 0..n-1, host [0], client [mySeat]). */
+    this._jamLocalSeats = [0];
+    /** @type {{ key: string; t: number }} */
+    this._jamPortalAccum = { key: "", t: 0 };
+    /** @type {null | { kind: string; label: string; x: number; y: number; r: number }} */
+    this.vibeJamExit = null;
+    /** @type {null | { kind: string; label: string; x: number; y: number; r: number }} */
+    this.vibeJamReturn = null;
+    /** @type {{ active: boolean; line1: string; line2: string; progress: number } | null} */
+    this.jamPortalHud = null;
     this.reset();
   }
 
@@ -705,6 +722,149 @@ export class Game {
       sanitizePlayerStats(pl.stats);
       sanitizePlayerEntity(pl);
     }
+    this.refreshVibeJamPortalLayout();
+    this._jamPortalAccum = { key: "", t: 0 };
+    this.jamPortalHud = null;
+  }
+
+  refreshVibeJamPortalLayout() {
+    this.vibeJamExit = computeExitPortal(CONFIG.WORLD_W ?? 2400, CONFIG.WORLD_H ?? 2400);
+    this.vibeJamReturn = hasJamReturnTarget()
+      ? computeReturnPortal(CONFIG.WORLD_W ?? 2400, CONFIG.WORLD_H ?? 2400)
+      : null;
+  }
+
+  /**
+   * Hold interact (seat-local key) inside ring to navigate webring.
+   * @param {number} dt
+   */
+  updateVibeJamPortals(dt) {
+    this.jamPortalHud = null;
+    if (this.mode !== "playing") return;
+
+    /** @type {{ kind: string; label: string; x: number; y: number; r: number }[]} */
+    const portals = [];
+    if (this.vibeJamReturn) portals.push(this.vibeJamReturn);
+    if (this.vibeJamExit) portals.push(this.vibeJamExit);
+    if (portals.length === 0) return;
+
+    const mult =
+      typeof CONFIG.COLLISION_PLAYER_RADIUS_MULT === "number"
+        ? CONFIG.COLLISION_PLAYER_RADIUS_MULT
+        : 1;
+    const pr = CONFIG.PLAYER_RADIUS * mult;
+    const reachPad = 12;
+
+    const locals = Array.isArray(this._jamLocalSeats) ? this._jamLocalSeats : [0];
+    /** @type {{ portal: object; seat: number; d: number } | null} */
+    let overlap = null;
+    for (const seat of locals) {
+      const p = this.players?.[seat];
+      if (!p || (p.hp ?? 0) <= 0) continue;
+      for (const portal of portals) {
+        const d = dist(p.x, p.y, portal.x, portal.y);
+        if (d > portal.r + pr + reachPad) continue;
+        if (!overlap || d < overlap.d) overlap = { portal, seat, d };
+      }
+    }
+
+    if (!overlap) {
+      this._jamPortalAccum = { key: "", t: 0 };
+      return;
+    }
+
+    const { portal, seat } = overlap;
+    const key = `${portal.kind}:${seat}`;
+    const held = interactHeldForSeat(seat);
+    const hint = interactKeyHintForSeat(seat);
+    const line1 =
+      portal.kind === "return" ? "Return Portal — go back with continuity" : "Vibe Jam Portal — exit to hub";
+    const line2 = `Hold [${hint}] 1s — ${portal.kind === "return" ? "previous game" : "vibejam.cc hub"}`;
+
+    if (!held) {
+      this._jamPortalAccum = { key: "", t: 0 };
+      this.jamPortalHud = { active: true, line1, line2, progress: 0 };
+      return;
+    }
+
+    if (this._jamPortalAccum.key !== key) this._jamPortalAccum = { key, t: 0 };
+    this._jamPortalAccum.t += dt;
+    const prog = Math.min(1, this._jamPortalAccum.t / 1);
+    this.jamPortalHud = { active: true, line1, line2, progress: prog };
+
+    if (this._jamPortalAccum.t < 1) return;
+
+    const p = this.players?.[seat];
+    const un =
+      typeof window !== "undefined" && window.__jamPortalUsername != null && String(window.__jamPortalUsername)
+        ? String(window.__jamPortalUsername).slice(0, 64)
+        : "ShadowArenaPlayer";
+    const color =
+      typeof window !== "undefined" && window.__jamPortalColor
+        ? String(window.__jamPortalColor).slice(0, 32)
+        : "purple";
+
+    if (portal.kind === "exit") {
+      const hpPct =
+        p && (p.maxHp ?? 0) > 0
+          ? Math.max(1, Math.min(100, Math.round(((p.hp ?? 0) / p.maxHp) * 100)))
+          : undefined;
+      const spd = p ? this.getMoveSpeed(p) / 88 : undefined;
+      /** @type {Record<string, string | number>} */
+      const extra = {};
+      if (hpPct != null) extra.hp = hpPct;
+      if (spd != null && Number.isFinite(spd)) extra.speed = Number(spd.toFixed(2));
+      redirectToVibeJamHub(un, color, extra);
+      return;
+    }
+    if (portal.kind === "return") {
+      redirectJamReturn();
+    }
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  drawVibeJamPortals(ctx) {
+    if (this.mode !== "playing") return;
+    const z = CONFIG.VIEW_WORLD_SCALE ?? 1;
+
+    /** @param {object} portal */
+    const drawOne = (portal, hueA, hueB) => {
+      const sp = this.worldToScreen(portal.x, portal.y);
+      const rPx = Math.max(20, portal.r / z);
+      const pulse = 0.55 + 0.45 * Math.sin(this.animTick * 3.1);
+      ctx.save();
+      ctx.globalAlpha = 0.45 + 0.25 * pulse;
+      const rg = ctx.createRadialGradient(sp.x, sp.y, rPx * 0.08, sp.x, sp.y, rPx * 1.08);
+      rg.addColorStop(0, hueA);
+      rg.addColorStop(0.62, hueB);
+      rg.addColorStop(1, "rgba(40,30,120,0)");
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, rPx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle =
+        portal.kind === "return" ? "rgba(140,214,255,0.95)" : "rgba(212,164,255,0.96)";
+      ctx.lineWidth = 3 + pulse * 2;
+      ctx.shadowColor = hueB;
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, rPx * 0.92, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = "rgba(226,236,255,0.95)";
+      ctx.font = "bold 13px system-ui,sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(portal.label, sp.x, sp.y - rPx - 14);
+      ctx.restore();
+    };
+
+    if (this.vibeJamReturn) drawOne(this.vibeJamReturn, "rgba(120,220,255,0.5)", "rgba(80,180,255,0.22)");
+    if (this.vibeJamExit) drawOne(this.vibeJamExit, "rgba(180,120,255,0.55)", "rgba(120,70,230,0.28)");
   }
 
   alivePlayers() {
@@ -1640,6 +1800,7 @@ export class Game {
         this.camX += (this.netReplayCamX - this.camX) * k;
         this.camY += (this.netReplayCamY - this.camY) * k;
       }
+      if (this.mode === "playing") this.updateVibeJamPortals(dt);
       return;
     }
     if (this.mode === "paused") {
@@ -1786,6 +1947,7 @@ export class Game {
     this.camX += (this.camTargetX - this.camX) * k;
     this.camY += (this.camTargetY - this.camY) * k;
 
+    this.updateVibeJamPortals(dt);
     // (Game over handled above when all players are dead.)
   }
 
@@ -4725,6 +4887,8 @@ export class Game {
         }
       }
     }
+
+    this.drawVibeJamPortals(ctx);
 
     for (const pl of this.players ?? []) {
       if (!pl) continue;

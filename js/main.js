@@ -20,6 +20,11 @@ import {
   loadAudioSettings,
   saveAudioSettings,
 } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
+import {
+  configureJamRedirectHooks,
+  ingestJamInboundUrl,
+  loadForwardBagFromStorage,
+} from "./net/vibeJamPortal.js?v=2026-04-30-portal-webring-1";
 
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
@@ -33,6 +38,21 @@ let gOnlineSession = null;
 let gPendingClientSnap = null;
 /** When client's game.mode/pending upgrades change, rebuild pause/level overlays to match host. */
 let gLastClientOverlaySig = null;
+
+configureJamRedirectHooks(() => {
+  try {
+    if (gOnlineSession?.socket) {
+      gOnlineSession.socket.emit("room:leave");
+      gOnlineSession.socket.disconnect();
+    }
+  } catch {
+    //
+  }
+  gOnlineSession = null;
+  gPendingClientSnap = null;
+  gLastClientOverlaySig = null;
+  clearOnlineInputBridge();
+});
 
 const canvas = document.getElementById("game");
 const xpFill = document.getElementById("xp-fill");
@@ -213,6 +233,41 @@ function syncHud(game) {
   levelDisplay.textContent = `Lv ${game.level}`;
 }
 
+function hydrateJamOutboundIdentity() {
+  try {
+    window.__jamPortalUsername = loadStoredOnlineDisplayName();
+    const bag = loadForwardBagFromStorage();
+    window.__jamPortalColor =
+      typeof bag.color === "string" && bag.color.trim() ? bag.color.trim().slice(0, 32) : "purple";
+  } catch {
+    window.__jamPortalUsername = "ShadowArenaPlayer";
+    window.__jamPortalColor = "purple";
+  }
+}
+
+function updateJamPortalHud(game, screenKind) {
+  const root = document.getElementById("jam-portal-prompt");
+  if (!root) return;
+  if (
+    screenKind !== "game" ||
+    game?.mode !== "playing" ||
+    !game?.jamPortalHud?.active
+  ) {
+    root.classList.add("hidden");
+    return;
+  }
+  const st = game.jamPortalHud;
+  const ln1 = root.querySelector(".jam-portal-line1");
+  const ln2 = root.querySelector(".jam-portal-line2");
+  /** @type {HTMLElement | null} */
+  const fill = root.querySelector(".jam-portal-bar-fill");
+  if (!(ln1 instanceof HTMLElement) || !(ln2 instanceof HTMLElement) || !(fill instanceof HTMLElement)) return;
+  root.classList.remove("hidden");
+  ln1.textContent = st.line1;
+  ln2.textContent = st.line2;
+  fill.style.width = `${Math.round(Math.min(1, Math.max(0, st.progress)) * 100)}%`;
+}
+
 function showLevelUp(game) {
   overlayLevel.classList.remove("hidden");
   overlayLevel.setAttribute("aria-hidden", "false");
@@ -338,6 +393,8 @@ function refreshOverlays(game) {
 
 async function main() {
   setupInput();
+  const jamInboundBoot = ingestJamInboundUrl();
+  if (jamInboundBoot.usernameHint) persistStoredOnlineDisplayName(jamInboundBoot.usernameHint);
 
   // UI click sounds (menus, character select, HUD, pause / game over, level-up choices).
   document.getElementById("game-root")?.addEventListener(
@@ -639,7 +696,17 @@ async function main() {
 
   refreshAudioSlidersFromStorage();
 
-  setScreen("menu");
+  if (!jamInboundBoot.instantPlay) {
+    setScreen("menu");
+  } else {
+    showOverlay(overlayMenu, false);
+    if (menuFog) {
+      menuFog.classList.add("hidden");
+      menuFog.setAttribute("aria-hidden", "true");
+    }
+    hideGameplay();
+    if (menuBonesCanvas) menuBonesCanvas.style.display = "none";
+  }
 
   const onMusicVolumeSlider = (slider) => {
     if (!(slider instanceof HTMLInputElement)) return;
@@ -1181,6 +1248,7 @@ async function main() {
 
       game.render();
       syncHud(game);
+      updateJamPortalHud(game, screen);
       updateOnlineGameplayHint(game);
 
       if (game.mode === "levelUp" && upgradeChoices.childElementCount === 0) {
@@ -1224,6 +1292,14 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "solo";
+    hydrateJamOutboundIdentity();
+    {
+      const nLc = Math.max(
+        1,
+        Math.min(4, Math.floor(Number(window.localPlayerCount ?? localPlayerCount) || 1))
+      );
+      game._jamLocalSeats = Array.from({ length: nLc }, (_, i) => i);
+    }
 
     refreshOverlays(game);
     syncHud(game);
@@ -1255,6 +1331,8 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "host";
+    hydrateJamOutboundIdentity();
+    game._jamLocalSeats = [0];
     gOnlineSession = {
       role: "host",
       socket,
@@ -1304,6 +1382,10 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "client";
+    hydrateJamOutboundIdentity();
+    game._jamLocalSeats = [
+      Math.max(0, Math.min(3, Math.floor(Number.isFinite(mySeat) ? mySeat : 0))),
+    ];
     setOnlineGuestSeat(mySeat);
     gOnlineSession = {
       role: "client",
@@ -1869,6 +1951,20 @@ async function main() {
     renderMpSlots();
     updateConfirmState();
   });
+
+  if (jamInboundBoot.instantPlay) {
+    hydrateJamOutboundIdentity();
+    characterSelectBrowseOnly = false;
+    onlineUiMode = null;
+    setLocalPlayerCount(1);
+    mpReady = [true];
+    selectedCharacter = MP_CHAR_ORDER[mpCharIndex[0] ?? 0] ?? "mage";
+    syncPickCardChrome();
+    syncMpCardChrome();
+    renderMpSlots();
+    updateConfirmState();
+    startGame();
+  }
 }
 
 main().catch(console.error);

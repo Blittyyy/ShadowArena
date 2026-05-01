@@ -2069,3 +2069,64 @@ html, body {
 #overlay-character-select.online-charselect-active #mp-player-slots {
   display: none;
 }
+
+/* -------------------------
+   Vibe Jam portal (webring)
+   ------------------------- */
+.jam-portal-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 108px;
+  transform: translateX(-50%);
+  z-index: 55;
+  pointer-events: none;
+  max-width: min(440px, 92vw);
+}
+
+.jam-portal-prompt.hidden {
+  display: none;
+}
+
+.jam-portal-card {
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: rgba(18, 10, 32, 0.82);
+  border: 1px solid rgba(180, 120, 255, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(90, 200, 255, 0.12),
+    0 14px 40px rgba(0, 0, 0, 0.55);
+}
+
+.jam-portal-line1 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #eae4ff;
+  text-align: center;
+}
+
+.jam-portal-line2 {
+  margin: 0;
+  font-size: 13px;
+  color: #bfaee0;
+  text-align: center;
+}
+
+.jam-portal-bar-wrap {
+  margin-top: 10px;
+}
+
+.jam-portal-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(70, 50, 120, 0.45);
+  overflow: hidden;
+}
+
+.jam-portal-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #63c4ff 0%, #c47cff 55%, #8866ff 100%);
+  transition: width 45ms linear;
+}
