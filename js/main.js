@@ -27,6 +27,9 @@ import {
 } from "./net/vibeJamPortal.js?v=2026-04-30-portal-webring-1";
 import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-touch-layout";
 
+const SERVER_TICK_RATE = 20;
+const SERVER_TICK_DT = 1 / SERVER_TICK_RATE;
+
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
 } catch {
@@ -1243,9 +1246,9 @@ async function main() {
 
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
         gOnlineSession.snapAcc = (gOnlineSession.snapAcc ?? 0) + dt;
-        /** ~30 Hz — balance bandwidth vs responsiveness (was 50ms / polling-first transport compounded lag). */
-        if (gOnlineSession.snapAcc >= 0.033) {
-          gOnlineSession.snapAcc = 0;
+        /** Fixed tick (~20 Hz) — stable payload cadence for clients. */
+        while (gOnlineSession.snapAcc >= SERVER_TICK_DT) {
+          gOnlineSession.snapAcc -= SERVER_TICK_DT;
           try {
             gOnlineSession.socket.emit("game:snapshot", buildGameSnapshot(game));
           } catch {
@@ -1427,6 +1430,12 @@ async function main() {
 
     socket.off("game:snapshot");
     socket.on("game:snapshot", (snap) => {
+      // Timestamp on receive for interpolation buffer.
+      try {
+        snap.__recvMs = performance.now();
+      } catch {
+        //
+      }
       gPendingClientSnap = snap;
     });
 

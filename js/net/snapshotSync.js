@@ -4,6 +4,10 @@
 import { CONFIG } from "../config.js?v=2026-04-30-coop-vs-balance-1";
 import { findUpgradeById } from "../upgrades.js";
 
+export const RECONCILE_LERP = 0.12;
+export const SNAP_DISTANCE = 120;
+export const INTERPOLATION_DELAY_MS = 120;
+
 function safeJson(obj) {
   try {
     return JSON.parse(
@@ -59,16 +63,11 @@ function snapPlayer(p) {
     hp: p.hp,
     maxHp: p.maxHp,
     facingRight: p.facingRight,
-    walkKind: p.walkKind,
-    walkFrame: p.walkFrame,
     moving: p.moving,
     hitTimer: p.hitTimer ?? 0,
     attackCd: p.attackCd ?? 0,
     attackTimer: p.attackTimer ?? 0,
     facingVec: { x: p.facingVec?.x ?? 1, y: p.facingVec?.y ?? 0 },
-    walkAccumUp: p.walkAccumUp ?? 0,
-    walkAccumDown: p.walkAccumDown ?? 0,
-    walkAccumSide: p.walkAccumSide ?? 0,
     bloodRageT: p.bloodRageT ?? 0,
     bloodRageCd: p.bloodRageCd ?? 0,
     stats,
@@ -77,11 +76,8 @@ function snapPlayer(p) {
     boomerangCd: p.boomerangCd ?? 0,
     lightningCd: p.lightningCd ?? 0,
     whipCd: p.whipCd ?? 0,
-    whipSwings: safeJson(p.whipSwings) ?? [],
     whipHeldHideT: p.whipHeldHideT ?? 0,
-    hammers: safeJson(p.hammers) ?? [],
     hammerOrbitPhase: p.hammerOrbitPhase ?? 0,
-    arcaneRunes: safeJson(p.arcaneRunes) ?? [],
     arcaneRuneOrbitPhase: p.arcaneRuneOrbitPhase ?? 0,
     toxicGrenadeCd: p.toxicGrenadeCd ?? 0,
     groundSlamCd: p.groundSlamCd ?? 0,
@@ -90,25 +86,21 @@ function snapPlayer(p) {
   };
 }
 
-function applyPlayer(target, snap) {
+function applyPlayer(target, snap, opts = {}) {
   if (!target || !snap) return;
+  const skipPos = opts?.skipPos === true;
   Object.assign(target, {
     characterId: snap.characterId,
-    x: snap.x,
-    y: snap.y,
+    x: skipPos ? target.x : snap.x,
+    y: skipPos ? target.y : snap.y,
     hp: snap.hp,
     maxHp: snap.maxHp,
     facingRight: snap.facingRight,
-    walkKind: snap.walkKind,
-    walkFrame: snap.walkFrame,
     moving: snap.moving,
     hitTimer: snap.hitTimer,
     attackCd: snap.attackCd,
     attackTimer: snap.attackTimer,
     facingVec: snap.facingVec,
-    walkAccumUp: snap.walkAccumUp,
-    walkAccumDown: snap.walkAccumDown,
-    walkAccumSide: snap.walkAccumSide,
     bloodRageT: snap.bloodRageT,
     bloodRageCd: snap.bloodRageCd,
     daggerCd: snap.daggerCd,
@@ -127,9 +119,6 @@ function applyPlayer(target, snap) {
   if (snap.stats && typeof snap.stats === "object") {
     Object.assign(target.stats, snap.stats);
   }
-  target.whipSwings = assignReplayArraysFromSnap(snap.whipSwings);
-  target.hammers = assignReplayArraysFromSnap(snap.hammers);
-  target.arcaneRunes = assignReplayArraysFromSnap(snap.arcaneRunes);
 }
 
 /**
@@ -215,8 +204,49 @@ export function applyGameSnapshot(game, snap) {
   game.magnetT = snap.magnetT ?? 0;
 
   const pls = snap.players ?? [];
+  const localSeat =
+    game?.netMode === "client"
+      ? Math.max(0, Math.min(3, Math.floor(Number(game?._jamLocalSeats?.[0] ?? 0) || 0)))
+      : -1;
+  const recvMs = Number(snap.__recvMs ?? snap.__srvMs ?? NaN);
+
   for (let i = 0; i < (game.players?.length ?? 0); i++) {
-    applyPlayer(game.players[i], pls[i]);
+    const isLocal = game?.netMode === "client" && i === localSeat;
+    const isRemote = game?.netMode === "client" && i !== localSeat;
+    const ps = pls[i];
+
+    if (isLocal && ps && Number.isFinite(ps.x) && Number.isFinite(ps.y)) {
+      game.netLocalServerX = ps.x;
+      game.netLocalServerY = ps.y;
+    } else if (isRemote && ps && Number.isFinite(ps.x) && Number.isFinite(ps.y)) {
+      if (!game.netRemotePosBuf) game.netRemotePosBuf = [[], [], [], []];
+      const buf = game.netRemotePosBuf[i] || (game.netRemotePosBuf[i] = []);
+      const t = Number.isFinite(recvMs) ? recvMs : performance.now();
+      buf.push({ t, x: ps.x, y: ps.y });
+      if (buf.length > 30) buf.splice(0, buf.length - 30);
+    }
+
+    // Apply non-position state. Positions are predicted/interpolated on clients.
+    applyPlayer(game.players[i], ps, { skipPos: game?.netMode === "client" });
+  }
+
+  // Server reconciliation: gently pull local predicted player toward server position.
+  if (game?.netMode === "client" && localSeat >= 0 && game.players?.[localSeat]) {
+    const p = game.players[localSeat];
+    const sx = Number(game.netLocalServerX);
+    const sy = Number(game.netLocalServerY);
+    if (Number.isFinite(sx) && Number.isFinite(sy)) {
+      const dx = sx - p.x;
+      const dy = sy - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > SNAP_DISTANCE) {
+        p.x = sx;
+        p.y = sy;
+      } else {
+        p.x += dx * RECONCILE_LERP;
+        p.y += dy * RECONCILE_LERP;
+      }
+    }
   }
   if (game.player) {
     game.playerFacingRight = !!game.player.facingRight;

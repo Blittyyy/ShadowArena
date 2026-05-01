@@ -2,6 +2,7 @@ import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-
 import { loadAudioSettings } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
 import { clamp, dist, angle, randRange } from "./mathutil.js";
 import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
+import { INTERPOLATION_DELAY_MS } from "./net/snapshotSync.js?v=2026-04-30-net-jitter-1";
 import {
   drawPlayer,
   drawXpOrb,
@@ -545,6 +546,12 @@ export class Game {
     /** Online client: last replicated camera targets from snapshots (smoothly approached each frame). */
     this.netReplayCamX = NaN;
     this.netReplayCamY = NaN;
+    /** Online client prediction/reconciliation: latest server position for local seat. */
+    this.netLocalServerX = NaN;
+    this.netLocalServerY = NaN;
+    /** Online client interpolation: per-seat position buffers (remote seats only). */
+    this.netRemotePosBuf = [[], [], [], []];
+    this.netRemotePosPtr = [0, 0, 0, 0];
     /** Seat indices controlled by keyboards on THIS machine (solo 0..n-1, host [0], client [mySeat]). */
     this._jamLocalSeats = [0];
     /** @type {{ key: string; t: number }} */
@@ -1791,6 +1798,17 @@ export class Game {
       this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
       this.updateParticles(dt);
       this.updateFloatTexts(dt);
+
+      // Client-side prediction: move local player immediately (movement only; host remains authoritative for combat/world).
+      if (this.mode === "playing") {
+        const localSeat = Math.max(
+          0,
+          Math.min(3, Math.floor(Number(this?._jamLocalSeats?.[0] ?? 0) || 0))
+        );
+        this.predictLocalMovement(dt, localSeat);
+        this.applyRemotePlayerInterpolation(localSeat);
+      }
+
       if (
         this.mode === "playing" &&
         Number.isFinite(this.netReplayCamX) &&
@@ -3890,6 +3908,96 @@ export class Game {
     const u = (this.pendingUpgrades ?? []).find((x) => x && x.id === upgradeId);
     if (!u) return;
     this.applyUpgrade(u);
+  }
+
+  /**
+   * Apply a movement-only prediction step for the local seat.
+   * Mirrors the position/facing parts of `updatePlayer` without spawning combat/VFX.
+   */
+  predictLocalMovement(dt, seat) {
+    const p = this.players?.[seat];
+    if (!p) return;
+    sanitizePlayerEntity(p);
+    if ((p.hp ?? 0) <= 0) return;
+
+    const m = getMovement(seat);
+    const sp = this.getMoveSpeed(p);
+
+    const pr =
+      CONFIG.PLAYER_RADIUS *
+      (typeof CONFIG.COLLISION_PLAYER_RADIUS_MULT === "number"
+        ? CONFIG.COLLISION_PLAYER_RADIUS_MULT
+        : 1);
+
+    const nx = p.x + m.x * sp * dt;
+    const ny = p.y + m.y * sp * dt;
+    const moved = applyArenaCollisionSlide(p.x, p.y, nx, ny, pr);
+    p.x = clamp(moved.x, pr, CONFIG.WORLD_W - pr);
+    p.y = clamp(moved.y, pr, CONFIG.WORLD_H - pr);
+
+    const moving = Math.hypot(m.x, m.y) > 0.1;
+    p.moving = moving;
+    if (moving) {
+      const mm = Math.hypot(m.x, m.y);
+      if (mm > 1e-4) {
+        p.facingVec.x = m.x / mm;
+        p.facingVec.y = m.y / mm;
+      }
+    }
+    const h = CONFIG.WALK_KIND_AXIS_HYSTERESIS ?? 1.2;
+    const ax = Math.abs(m.x);
+    const ay = Math.abs(m.y);
+    if (moving) {
+      if (ax > ay * h) {
+        p.walkKind = "side";
+        if (ax > 0.01) p.facingRight = m.x > 0;
+      } else if (ay > ax * h && m.y > 0) {
+        p.walkKind = "down";
+      } else if (ay > ax * h && m.y < 0) {
+        p.walkKind = "up";
+      } else {
+        if (p.walkKind === "side" && ax > 0.01) p.facingRight = m.x > 0;
+      }
+    }
+
+    // Keep 2-way sheets responsive (same rules as server).
+    if (
+      (p.characterId === "berserker" || p.characterId === "mage" || p.characterId === "revenant") &&
+      Math.abs(m.x) > 1e-4
+    ) {
+      p.facingRight = m.x > 0;
+    }
+  }
+
+  /**
+   * Interpolate remote players (non-local seats) to reduce snapping.
+   * Renders about `INTERPOLATION_DELAY_MS` in the past.
+   */
+  applyRemotePlayerInterpolation(localSeat) {
+    const players = this.players ?? [];
+    if (players.length === 0) return;
+    const now = performance.now();
+    const targetT = now - INTERPOLATION_DELAY_MS;
+
+    for (let seat = 0; seat < players.length; seat++) {
+      if (seat === localSeat) continue;
+      const p = players[seat];
+      if (!p) continue;
+      const buf = this.netRemotePosBuf?.[seat];
+      if (!buf || buf.length < 2) continue;
+
+      let idx = this.netRemotePosPtr?.[seat] ?? 0;
+      while (idx + 1 < buf.length && buf[idx + 1].t <= targetT) idx++;
+      this.netRemotePosPtr[seat] = idx;
+
+      const a = buf[idx];
+      const b = buf[Math.min(idx + 1, buf.length - 1)];
+      if (!a || !b) continue;
+      const span = Math.max(1, b.t - a.t);
+      const t = Math.max(0, Math.min(1, (targetT - a.t) / span));
+      p.x = a.x + (b.x - a.x) * t;
+      p.y = a.y + (b.y - a.y) * t;
+    }
   }
 
   updateParticles(dt) {

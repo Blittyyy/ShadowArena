@@ -41,6 +41,11 @@ const io = new Server(server, {
   perMessageDeflate: false,
 });
 
+// Fixed-rate snapshot relay (host-driven sim).
+// Clients interpolate/predict; server should broadcast at a stable cadence.
+const SERVER_TICK_RATE = 20;
+const SERVER_TICK_MS = Math.round(1000 / SERVER_TICK_RATE);
+
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function randomRoomCode() {
@@ -57,7 +62,7 @@ function sanitizeDisplayName(raw) {
   return s;
 }
 
-/** @type {Map<string, { code: string, hostId: string, members: Map<string, { seat: number, characterId: string, ready: boolean, displayName: string }>, started: boolean }>} */
+/** @type {Map<string, { code: string, hostId: string, members: Map<string, { seat: number, characterId: string, ready: boolean, displayName: string }>, started: boolean, latestSnap?: any, latestSnapAt?: number }>} */
 const rooms = new Map();
 
 function lobbyPayload(room) {
@@ -220,7 +225,9 @@ io.on("connection", (socket) => {
     const code = socket.data.roomCode;
     const room = code ? rooms.get(code) : null;
     if (!room || !room.started || socket.id !== room.hostId) return;
-    socket.to(code).emit("game:snapshot", snap);
+    // Store only; broadcast happens on fixed tick below.
+    room.latestSnap = snap;
+    room.latestSnapAt = Date.now();
   });
 
   /** Non-host movement / intent */
@@ -251,6 +258,31 @@ io.on("connection", (socket) => {
     leaveRoom(socket, true);
   });
 });
+
+// Fixed tick broadcast loop (20 Hz). Keeps network + client decode stable.
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (!room.started) continue;
+    const snap = room.latestSnap;
+    if (!snap) continue;
+
+    // Stamp server time so clients can jitter-buffer without relying on host clocks.
+    try {
+      snap.__srvMs = now;
+    } catch {
+      //
+    }
+
+    // Broadcast to everyone except host (host already simulates locally).
+    try {
+      io.to(room.code).except(room.hostId).emit("game:snapshot", snap);
+    } catch {
+      // Older socket.io builds may not support `.except`; fall back to room emit.
+      io.to(room.code).emit("game:snapshot", snap);
+    }
+  }
+}, SERVER_TICK_MS);
 
 function leaveRoom(socket, isDisconnect) {
   const code = socket.data.roomCode;
