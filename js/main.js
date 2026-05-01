@@ -29,10 +29,14 @@ import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-touch-l
 
 const SERVER_TICK_RATE = 20;
 const SERVER_TICK_DT = 1 / SERVER_TICK_RATE;
-const MULTIPLAYER_DEBUG =
-  typeof window !== "undefined" &&
-  ((window.MULTIPLAYER_DEBUG === true) ||
-    (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1"));
+/** Read each time so toggling `window.MULTIPLAYER_DEBUG` in DevTools works without reload. */
+function isMultiplayerDebug() {
+  if (typeof window === "undefined") return false;
+  return (
+    window.MULTIPLAYER_DEBUG === true ||
+    (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1")
+  );
+}
 
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
@@ -1261,7 +1265,9 @@ async function main() {
       // Online debug overlay + reconnect hint (client/joiner focused).
       if (gOnlineSession && game.netMode !== "solo") {
         const el = ensureMpDebugOverlay();
-        if (MULTIPLAYER_DEBUG) el.style.display = "block";
+        const dbg = isMultiplayerDebug();
+        if (dbg) el.style.display = "block";
+        else el.style.display = "none";
         const sock = gOnlineSession.socket;
         const pingMs = Number(sock?.io?.engine?.ping ?? NaN);
         const recvAgoMs =
@@ -1274,7 +1280,7 @@ async function main() {
           hint.style.display = "";
           hint.style.opacity = "0.9";
         }
-        if (MULTIPLAYER_DEBUG) {
+        if (dbg) {
           const inputN = gOnlineSession._dbgInputN ?? 0;
           gOnlineSession._dbgInputN = 0;
           const evN = Array.isArray(gPendingClientSnap?.ev) ? gPendingClientSnap.ev.length : 0;
@@ -1350,7 +1356,7 @@ async function main() {
             //
           }
           gOnlineSession.lastEmittedInput = { ax, ay };
-          if (MULTIPLAYER_DEBUG) gOnlineSession._dbgInputN = (gOnlineSession._dbgInputN ?? 0) + 1;
+          if (isMultiplayerDebug()) gOnlineSession._dbgInputN = (gOnlineSession._dbgInputN ?? 0) + 1;
         };
 
         // Immediate send on any change (especially critical for stop/zero).
@@ -1471,7 +1477,7 @@ async function main() {
     game.setNetQueueEvent?.((ev) => {
       if (!game?._netPendingEvents) game._netPendingEvents = [];
       game._netPendingEvents.push(ev);
-      if (MULTIPLAYER_DEBUG) {
+      if (isMultiplayerDebug()) {
         try {
           console.log("[mp] queueEvent", ev);
         } catch {
@@ -1582,7 +1588,7 @@ async function main() {
         //
       }
       gPendingClientSnap = snap;
-      if (MULTIPLAYER_DEBUG) {
+      if (isMultiplayerDebug()) {
         try {
           const evN = Array.isArray(snap?.ev) ? snap.ev.length : 0;
           console.log("[mp] snapshot recv", { evN, t: snap?.t, mode: snap?.mode });
