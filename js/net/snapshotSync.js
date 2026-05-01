@@ -63,6 +63,8 @@ function snapPlayer(p) {
     hp: p.hp,
     maxHp: p.maxHp,
     facingRight: p.facingRight,
+    walkKind: p.walkKind,
+    walkFrame: p.walkFrame,
     moving: p.moving,
     hitTimer: p.hitTimer ?? 0,
     attackCd: p.attackCd ?? 0,
@@ -76,8 +78,12 @@ function snapPlayer(p) {
     boomerangCd: p.boomerangCd ?? 0,
     lightningCd: p.lightningCd ?? 0,
     whipCd: p.whipCd ?? 0,
+    // Visual-only state used for rendering weapon orbits / slashes on clients.
+    whipSwings: safeJson(p.whipSwings) ?? [],
     whipHeldHideT: p.whipHeldHideT ?? 0,
+    hammers: safeJson(p.hammers) ?? [],
     hammerOrbitPhase: p.hammerOrbitPhase ?? 0,
+    arcaneRunes: safeJson(p.arcaneRunes) ?? [],
     arcaneRuneOrbitPhase: p.arcaneRuneOrbitPhase ?? 0,
     toxicGrenadeCd: p.toxicGrenadeCd ?? 0,
     groundSlamCd: p.groundSlamCd ?? 0,
@@ -96,6 +102,8 @@ function applyPlayer(target, snap, opts = {}) {
     hp: snap.hp,
     maxHp: snap.maxHp,
     facingRight: snap.facingRight,
+    walkKind: snap.walkKind,
+    walkFrame: snap.walkFrame,
     moving: snap.moving,
     hitTimer: snap.hitTimer,
     attackCd: snap.attackCd,
@@ -119,6 +127,9 @@ function applyPlayer(target, snap, opts = {}) {
   if (snap.stats && typeof snap.stats === "object") {
     Object.assign(target.stats, snap.stats);
   }
+  target.whipSwings = assignReplayArraysFromSnap(snap.whipSwings);
+  target.hammers = assignReplayArraysFromSnap(snap.hammers);
+  target.arcaneRunes = assignReplayArraysFromSnap(snap.arcaneRunes);
 }
 
 /**

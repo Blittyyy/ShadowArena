@@ -3967,6 +3967,34 @@ export class Game {
     ) {
       p.facingRight = m.x > 0;
     }
+
+    // Walk animation frames (same math as `updatePlayer`, movement-only).
+    const baseDpf = Math.max(0.5, CONFIG.PLAYER_WALK_DIST_PER_FRAME ?? 22);
+    const sideDpf = baseDpf * (CONFIG.PLAYER_WALK_SIDE_DIST_SCALE ?? 1);
+    if (moving && (p.hitTimer ?? 0) <= 0) {
+      const kind = p.walkKind;
+      if (kind === "side") {
+        p.walkAccumSide = (p.walkAccumSide ?? 0) + sp * dt;
+        const cl = sideDpf * 4;
+        p.walkAccumSide %= cl;
+        p.walkFrame = Math.floor(p.walkAccumSide / sideDpf) % 4;
+      } else if (kind === "up") {
+        p.walkAccumUp = (p.walkAccumUp ?? 0) + sp * dt;
+        const cl = baseDpf * 4;
+        p.walkAccumUp %= cl;
+        p.walkFrame = Math.floor(p.walkAccumUp / baseDpf) % 4;
+      } else {
+        p.walkAccumDown = (p.walkAccumDown ?? 0) + sp * dt;
+        const cl = baseDpf * 4;
+        p.walkAccumDown %= cl;
+        p.walkFrame = Math.floor(p.walkAccumDown / baseDpf) % 4;
+      }
+    } else if (!moving) {
+      p.walkAccumUp = 0;
+      p.walkAccumDown = 0;
+      p.walkAccumSide = 0;
+      p.walkFrame = 0;
+    }
   }
 
   /**
@@ -5105,7 +5133,8 @@ export class Game {
     }
 
     // Berserker slash VFX: one-frame red slash sprite (hitbox applied immediately at spawn).
-    if (this.characterId === "berserker" && Array.isArray(this.slashes) && this.slashes.length > 0) {
+    // In online co-op, berserker may not be player 1 on this client — draw slashes whenever present.
+    if (Array.isArray(this.slashes) && this.slashes.length > 0) {
       const vDur = Math.max(0.05, CONFIG.BERSERKER_SLASH_VFX_DURATION ?? 0.18);
       for (const s of this.slashes) {
         const elapsed = (s.maxLife ?? 0) - (s.life ?? 0);
