@@ -419,6 +419,13 @@ html, body {
   justify-content: center;
   background: rgba(8, 5, 14, 0.82);
   pointer-events: auto;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 
 .overlay.hidden {
@@ -435,9 +442,53 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 min(28px, 4vw) clamp(56px, 12vh, 140px) min(28px, 4vw);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: max(min(28px, 4vw), env(safe-area-inset-right, 0px));
+  padding-bottom: max(clamp(40px, 10vh, 128px), env(safe-area-inset-bottom, 0px) + 14px);
+  padding-left: max(min(28px, 4vw), env(safe-area-inset-left, 0px));
   box-sizing: border-box;
   position: fixed;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+/* Phones / landscape: stacked menu can exceed viewport height — scroll + vertically centered shell */
+@media (max-height: 560px), (orientation: landscape) and (max-height: 520px) {
+  #overlay-menu.overlay {
+    justify-content: flex-start;
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px) + 12px);
+  }
+
+  #overlay-menu .menu-shell {
+    margin-block: auto;
+  }
+
+  #overlay-menu .menu-actions {
+    gap: 8px;
+  }
+
+  #overlay-menu .menu-btn {
+    min-height: 44px;
+    width: min(340px, calc(100vw - 48px));
+    padding: 0 14px;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
+  }
+}
+
+/* Touch: slightly tighter stack so thumb reach + less overflow vs desktop art anchors */
+@media (pointer: coarse) {
+  #overlay-menu.overlay {
+    padding-bottom: max(clamp(28px, 8vh, 96px), env(safe-area-inset-bottom, 0px) + 12px);
+  }
+
+  #overlay-menu .menu-actions {
+    gap: 11px;
+  }
 }
 
 .menu-bones-canvas {
@@ -459,6 +510,7 @@ html, body {
   padding-bottom: 0;
   position: relative;
   z-index: 2;
+  flex-shrink: 0;
 }
 
 .menu-title-wrap {
@@ -529,6 +581,7 @@ html, body {
   min-height: 56px;
   padding: 0 20px;
   border-radius: 6px;
+  touch-action: manipulation;
   /* Worn dark metal: plum shadow + ember-gold frame */
   color: #e6dcc8;
   font-family: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Times New Roman", serif;
