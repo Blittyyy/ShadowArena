@@ -29,6 +29,10 @@ import { initMobileGameControls } from "./mobileControls.js?v=2026-04-30-touch-l
 
 const SERVER_TICK_RATE = 20;
 const SERVER_TICK_DT = 1 / SERVER_TICK_RATE;
+const MULTIPLAYER_DEBUG =
+  typeof window !== "undefined" &&
+  ((window.MULTIPLAYER_DEBUG === true) ||
+    (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1"));
 
 try {
   console.log("[main] loaded v-2026-04-30-coop-vs-balance-1");
@@ -1363,6 +1367,17 @@ async function main() {
 
     game = new Game(canvas);
     game.netMode = "host";
+    game.setNetQueueEvent?.((ev) => {
+      if (!game?._netPendingEvents) game._netPendingEvents = [];
+      game._netPendingEvents.push(ev);
+      if (MULTIPLAYER_DEBUG) {
+        try {
+          console.log("[mp] queueEvent", ev);
+        } catch {
+          //
+        }
+      }
+    });
     hydrateJamOutboundIdentity();
     game._jamLocalSeats = [0];
     gOnlineSession = {
@@ -1437,6 +1452,14 @@ async function main() {
         //
       }
       gPendingClientSnap = snap;
+      if (MULTIPLAYER_DEBUG) {
+        try {
+          const evN = Array.isArray(snap?.ev) ? snap.ev.length : 0;
+          console.log("[mp] snapshot recv", { evN, t: snap?.t, mode: snap?.mode });
+        } catch {
+          //
+        }
+      }
     });
 
     refreshOverlays(game);

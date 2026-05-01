@@ -552,6 +552,13 @@ export class Game {
     /** Online client interpolation: per-seat position buffers (remote seats only). */
     this.netRemotePosBuf = [[], [], [], []];
     this.netRemotePosPtr = [0, 0, 0, 0];
+    /** Online host: snapshot-embedded events (damage feedback / ability VFX). */
+    this._netQueueEvent = null;
+    this._netPendingEvents = [];
+    /** Online client: enemy HP cache for damage events. */
+    this._netEnemyById = null;
+    this._netLastEnemyHp = null;
+    this._netLastEnemyDmgAt = null;
     /** Seat indices controlled by keyboards on THIS machine (solo 0..n-1, host [0], client [mySeat]). */
     this._jamLocalSeats = [0];
     /** @type {{ key: string; t: number }} */
@@ -639,6 +646,10 @@ export class Game {
     this.xpOrbs = [];
     this.particles = [];
     this.floatTexts = [];
+    this._netPendingEvents = [];
+    this._netEnemyById = null;
+    this._netLastEnemyHp = null;
+    this._netLastEnemyDmgAt = null;
     this.camX = this.player.x - viewWorldW() / 2;
     this.camY = this.player.y - viewWorldH() / 2;
     this.camTargetX = this.camX;
@@ -1176,6 +1187,31 @@ export class Game {
     if (e.hp <= 0) {
       this.killEnemy(e);
       return true;
+    }
+    // Online: queue authoritative damage feedback for remote clients (numbers/VFX are local-only there).
+    if (
+      this.netMode === "host" &&
+      typeof this._netQueueEvent === "function" &&
+      typeof e.id === "number" &&
+      Number.isFinite(e.x) &&
+      Number.isFinite(e.y)
+    ) {
+      const hpAfter = e.hp;
+      const amt = dmg;
+      // Minimal dedupe to avoid spamming on rapid DoT ticks.
+      e._netLastDmgEvT = e._netLastDmgEvT ?? -999;
+      if ((this.time ?? 0) - e._netLastDmgEvT > 0.035) {
+        e._netLastDmgEvT = this.time ?? 0;
+        this._netQueueEvent({
+          type: "damage",
+          enemyId: e.id,
+          damageAmount: Math.round(amt * 100) / 100,
+          enemyHpAfter: hpAfter,
+          x: e.x,
+          y: e.y,
+          t: this.time ?? 0,
+        });
+      }
     }
     if (!opts.skipHitSfx) this.tryPlayEnemyHitSfx(e);
     return false;
@@ -1807,6 +1843,9 @@ export class Game {
         );
         this.predictLocalMovement(dt, localSeat);
         this.applyRemotePlayerInterpolation(localSeat);
+
+        // Advance short-lived VFX timers locally so they don't "stick" between snapshots.
+        this.netTickClientVfx(dt);
       }
 
       if (
@@ -4023,8 +4062,173 @@ export class Game {
       if (!a || !b) continue;
       const span = Math.max(1, b.t - a.t);
       const t = Math.max(0, Math.min(1, (targetT - a.t) / span));
-      p.x = a.x + (b.x - a.x) * t;
-      p.y = a.y + (b.y - a.y) * t;
+      const nx = a.x + (b.x - a.x) * t;
+      const ny = a.y + (b.y - a.y) * t;
+
+      // Drive remote animation from rendered velocity to avoid sliding.
+      this._netPrevRenderX ??= [NaN, NaN, NaN, NaN];
+      this._netPrevRenderY ??= [NaN, NaN, NaN, NaN];
+      this._netRemoteWalkAccum ??= [0, 0, 0, 0];
+
+      const px = this._netPrevRenderX[seat];
+      const py = this._netPrevRenderY[seat];
+      this._netPrevRenderX[seat] = nx;
+      this._netPrevRenderY[seat] = ny;
+
+      p.x = nx;
+      p.y = ny;
+
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        const vx = nx - px;
+        const vy = ny - py;
+        const speed = Math.hypot(vx, vy);
+        const moving = speed > 0.18; // pixels/frame-ish threshold (tuned for 60fps rendering)
+        p.moving = moving;
+        if (moving) {
+          // Facing + walk kind from velocity direction.
+          if (Math.abs(vx) > Math.abs(vy) * (CONFIG.WALK_KIND_AXIS_HYSTERESIS ?? 1.2)) {
+            p.walkKind = "side";
+            p.facingRight = vx >= 0;
+          } else if (vy < 0) {
+            p.walkKind = "up";
+          } else {
+            p.walkKind = "down";
+          }
+
+          // Walk frame advance (approx distance-based).
+          const baseDpf = Math.max(0.5, CONFIG.PLAYER_WALK_DIST_PER_FRAME ?? 22);
+          const distStep = Math.max(0.1, (baseDpf / (CONFIG.VIEW_WORLD_SCALE ?? 1)) * 0.08);
+          this._netRemoteWalkAccum[seat] += speed;
+          if (this._netRemoteWalkAccum[seat] >= distStep) {
+            const steps = Math.floor(this._netRemoteWalkAccum[seat] / distStep);
+            this._netRemoteWalkAccum[seat] -= steps * distStep;
+            p.walkFrame = ((p.walkFrame ?? 0) + steps) % 4;
+          }
+        } else {
+          p.walkFrame = 0;
+        }
+      }
+    }
+  }
+
+  /** Host: allow main.js to provide a queue sink for events. */
+  setNetQueueEvent(fn) {
+    this._netQueueEvent = typeof fn === "function" ? fn : null;
+  }
+
+  /** Host: called from main tick to drain queued events into snapshot. */
+  netDrainEvents() {
+    const ev = this._netPendingEvents;
+    if (!Array.isArray(ev) || ev.length === 0) return [];
+    this._netPendingEvents = [];
+    return ev;
+  }
+
+  /** Client: apply damage events for hit feedback + HP correctness. */
+  netApplyDamageEvents(events, debug = false) {
+    if (!Array.isArray(events) || events.length === 0) return;
+
+    // Build enemy map lazily.
+    if (!this._netEnemyById) this._netEnemyById = new Map();
+    const map = this._netEnemyById;
+    map.clear();
+    for (const e of this.enemies ?? []) {
+      if (e && typeof e.id === "number") map.set(e.id, e);
+    }
+
+    this._netLastEnemyHp ??= new Map();
+    this._netLastEnemyDmgAt ??= new Map();
+
+    for (const ev of events) {
+      if (!ev || ev.type !== "damage") continue;
+      const id = ev.enemyId;
+      if (typeof id !== "number") continue;
+      const e = map.get(id);
+      if (!e) continue;
+
+      // Set authoritative HP.
+      if (typeof ev.enemyHpAfter === "number") e.hp = ev.enemyHpAfter;
+      e.hitFlash = Math.max(e.hitFlash ?? 0, CONFIG.HIT_FLASH_DURATION * 0.75);
+
+      // Dedup spam (DoT ticks etc).
+      const lastAt = this._netLastEnemyDmgAt.get(id) ?? -999;
+      const t = typeof ev.t === "number" ? ev.t : this.time ?? 0;
+      if (t - lastAt < 0.03) continue;
+      this._netLastEnemyDmgAt.set(id, t);
+
+      // Spawn local feedback.
+      const dx = typeof ev.damageAmount === "number" ? ev.damageAmount : 0;
+      const sx = typeof ev.x === "number" ? ev.x : e.x;
+      const sy = typeof ev.y === "number" ? ev.y : e.y;
+      this.spawnHitParticles(sx, sy);
+      this.addFloatText(
+        sx,
+        sy - (ENEMY_TYPES[e.typeId]?.radius ?? 10) - 4,
+        Math.ceil(dx).toString(),
+        "#e8d4ff"
+      );
+
+      if (debug) {
+        try {
+          console.log("[mp] damageEvent", { enemyId: id, dmg: dx, hp: e.hp });
+        } catch {
+          //
+        }
+      }
+    }
+  }
+
+  /**
+   * Client-only: advance lifetimes and spawn local-only VFX driven by authoritative state.
+   * Keeps online feel closer to local without syncing particles/floatText objects.
+   */
+  netTickClientVfx(dt) {
+    // Slashes lifetime.
+    if (Array.isArray(this.slashes)) {
+      for (let i = this.slashes.length - 1; i >= 0; i--) {
+        const s = this.slashes[i];
+        if (!s) continue;
+        s.life = (s.life ?? 0) - dt;
+        if ((s.life ?? 0) <= 0) this.slashes.splice(i, 1);
+      }
+    }
+
+    // Ground slam rings lifetime (visual only).
+    if (Array.isArray(this.groundSlams)) {
+      for (let i = this.groundSlams.length - 1; i >= 0; i--) {
+        const s = this.groundSlams[i];
+        if (!s) continue;
+        s.life = (s.life ?? 0) - dt;
+        if ((s.life ?? 0) <= 0) this.groundSlams.splice(i, 1);
+      }
+    }
+
+    // Blood rage particles: spawn locally for any berserker with bloodRageT>0.
+    for (const pl of this.players ?? []) {
+      if (!pl) continue;
+      const cid = pl.characterId ?? pl.stats?.characterId;
+      if (cid !== "berserker") continue;
+      if (!((pl.bloodRageT ?? 0) > 0)) continue;
+      pl._netBloodFxCd = (pl._netBloodFxCd ?? 0) - dt;
+      const rate = 0.045;
+      while ((pl._netBloodFxCd ?? 0) <= 0) {
+        pl._netBloodFxCd = (pl._netBloodFxCd ?? 0) + rate;
+        const hx = pl.x + randRange(-10, 10);
+        const hy = pl.y - 76 + randRange(-10, 6);
+        const a = randRange(-Math.PI * 0.85, -Math.PI * 0.15);
+        const sp = randRange(60, 160);
+        const outward = randRange(18, 52);
+        this.particles.push({
+          x: hx + Math.cos(a) * outward * 0.08,
+          y: hy + Math.sin(a) * outward * 0.08,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp - randRange(10, 40),
+          life: randRange(0.35, 0.65),
+          maxLife: randRange(0.35, 0.65),
+          color: Math.random() < 0.5 ? "rgba(255,90,70,1)" : "rgba(255,190,90,1)",
+          size: randRange(1.8, 3.4),
+        });
+      }
     }
   }
 

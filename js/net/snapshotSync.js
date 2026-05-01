@@ -137,6 +137,7 @@ function applyPlayer(target, snap, opts = {}) {
  */
 export function buildGameSnapshot(game) {
   const pendingUpgradeIds = (game.pendingUpgrades ?? []).map((u) => u?.id).filter(Boolean);
+  const netEvents = typeof game?.netDrainEvents === "function" ? game.netDrainEvents() : [];
   return {
     v: 1,
     t: game.time,
@@ -158,6 +159,7 @@ export function buildGameSnapshot(game) {
     bossIntroTheme: game.bossIntroTheme,
     viewWorldScale: CONFIG.VIEW_WORLD_SCALE ?? 1,
     magnetT: game.magnetT ?? 0,
+    ev: Array.isArray(netEvents) && netEvents.length ? netEvents : undefined,
     players: (game.players ?? []).map(snapPlayer),
     enemies: safeJson(game.enemies ?? []) ?? [],
     projectiles: safeJson(game.projectiles ?? []) ?? [],
@@ -187,6 +189,11 @@ export function buildGameSnapshot(game) {
  */
 export function applyGameSnapshot(game, snap) {
   if (!snap || snap.v !== 1) return;
+  // Optional debug flag.
+  const mpDebug =
+    typeof window !== "undefined" &&
+    ((window.MULTIPLAYER_DEBUG === true) ||
+      (typeof window.MULTIPLAYER_DEBUG === "string" && window.MULTIPLAYER_DEBUG === "1"));
   game.time = snap.t ?? game.time;
   game.mode = snap.mode ?? game.mode;
   game.level = snap.level ?? game.level;
@@ -213,6 +220,11 @@ export function applyGameSnapshot(game, snap) {
     CONFIG.VIEW_WORLD_SCALE = snap.viewWorldScale;
   }
   game.magnetT = snap.magnetT ?? 0;
+
+  // Apply authoritative damage feedback events (client spawns local visuals).
+  if (game?.netMode === "client" && typeof game.netApplyDamageEvents === "function") {
+    game.netApplyDamageEvents(snap.ev, mpDebug);
+  }
 
   const pls = snap.players ?? [];
   const localSeat =
