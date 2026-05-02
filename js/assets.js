@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js?v=2026-04-30-coop-vs-balance-1";
+import { CONFIG } from "./config.js?v=2026-05-03-xp-progression";
 
 // Dev: quick cache-buster sanity check (remove anytime).
 try {

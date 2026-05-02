@@ -1,7 +1,7 @@
 /**
  * Host → clients world replication (plain JSON-safe structures).
  */
-import { CONFIG } from "../config.js?v=2026-04-30-coop-vs-balance-1";
+import { CONFIG } from "../config.js?v=2026-05-03-xp-progression";
 import { findUpgradeById } from "../upgrades.js";
 
 /** No XY correction below this gap when idle (released input). Host settle when stopped. */

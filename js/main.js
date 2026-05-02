@@ -9,7 +9,7 @@ import {
 import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-stop-dwell";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-05-02-stop-dwell";
+import { Game } from "./game.js?v=2026-05-03-xp-progression";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -732,7 +732,7 @@ async function main() {
   refreshAudioSlidersFromStorage();
 
   if (!jamInboundBoot.instantPlay) {
-    setScreen("menu");
+  setScreen("menu");
   } else {
     showOverlay(overlayMenu, false);
     if (menuFog) {
@@ -780,7 +780,7 @@ async function main() {
   if (btnMenuSettings) btnMenuSettings.disabled = true;
 
   try {
-    await loadAssets();
+  await loadAssets();
   } catch (err) {
     console.error("[assets] load failed; continuing to menu anyway", err);
   }
@@ -2082,7 +2082,7 @@ async function main() {
       const idx = MP_CHAR_ORDER.indexOf(id);
       const seatIx = Math.max(0, Math.min(localPlayerCount - 1, onlineMySeat | 0));
       if (idx >= 0) mpCharIndex[seatIx] = idx;
-      selectedCharacter = id;
+    selectedCharacter = id;
       onlineSocket?.emit("lobby:setCharacter", { characterId: id });
       syncPickCardChrome();
       syncMpCardChrome();

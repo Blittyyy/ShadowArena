@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js?v=2026-04-30-coop-vs-balance-1";
+import { CONFIG } from "./config.js?v=2026-05-03-xp-progression";
 
 export const UPGRADE_POOL = [
   {

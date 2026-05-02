@@ -1,4 +1,4 @@
-import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-04-30-coop-vs-balance-1";
+import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-05-03-xp-progression";
 import { loadAudioSettings } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
 import { clamp, dist, angle, randRange } from "./mathutil.js";
 import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
@@ -950,6 +950,15 @@ export class Game {
     const n = this.getCoopPlayerCount();
     const per = CONFIG.COOP_ENEMY_HP_MULT_PER_EXTRA_PLAYER ?? 0;
     return Math.max(1, 1 + (n - 1) * Math.max(0, per));
+  }
+
+  /** Applied to every XP grant (orbs). Global buff + extra reward per co-op player. */
+  getXpIncomeMult() {
+    const g = Math.max(0.25, Number(CONFIG.XP_GAIN_GLOBAL_MULT ?? 1));
+    const n = this.getCoopPlayerCount();
+    const per = Math.max(0, Number(CONFIG.COOP_XP_INCOME_PER_EXTRA_PLAYER ?? 0));
+    const party = Math.max(1, 1 + (n - 1) * per);
+    return g * party;
   }
 
   /** Revenant: up to `want` foes within Soul Rip radius, nearest first; pads with clone of nearest for multi-shot. */
@@ -3931,7 +3940,8 @@ export class Game {
     const v = Number(amount);
     if (!Number.isFinite(v) || v <= 0) return;
     if (!Number.isFinite(this.xp)) this.xp = 0;
-    this.xp += v;
+    const gained = v * this.getXpIncomeMult();
+    this.xp += gained;
     while (this.xp >= this.xpToNext) {
       this.xp -= this.xpToNext;
       this.level += 1;

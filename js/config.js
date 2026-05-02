@@ -485,6 +485,13 @@ export const CONFIG = {
   COOP_SPAWN_INTENSITY_PER_EXTRA_PLAYER: 0.22,
   /** Each extra player multiplies enemy max HP after time scaling (solo = baseline). */
   COOP_ENEMY_HP_MULT_PER_EXTRA_PLAYER: 0.18,
+  /** Multiplies every XP grant (orb pickups, etc.). Solo + online host sim. */
+  XP_GAIN_GLOBAL_MULT: 1.18,
+  /**
+   * Party XP income: effective mult *= `1 + (partySize - 1) * value` (solo = 1).
+   * Compensates shared team level + tougher enemies without splitting orb drops per player.
+   */
+  COOP_XP_INCOME_PER_EXTRA_PLAYER: 0.1,
   /** Seconds; HP multiplier is 1 + min(time / this, ENEMY_HP_SCALE_MAX_BONUS). */
   ENEMY_HP_SCALE_TIME_CAP: 120,
   ENEMY_HP_SCALE_MAX_BONUS: 0.5,
@@ -655,8 +662,8 @@ export const CONFIG = {
   XP_ORB_MAGNET: 140,
   XP_ORB_PULL: 320,
   /** XP progression: xpToNext = base * level^exp */
-  XP_LEVEL_BASE: 22,
-  XP_LEVEL_EXPONENT: 1.3,
+  XP_LEVEL_BASE: 19,
+  XP_LEVEL_EXPONENT: 1.22,
   /** Magnet pickup expands XP magnet radius but does not pull the whole map. */
   XP_MAGNET_PICKUP_DURATION: 2.0,
   XP_ORB_MAGNET_WHEN_PICKUP: 320,
@@ -666,9 +673,9 @@ export const CONFIG = {
   XP_ORB_FLOAT_SPEED: 2.65,
 
   /** XP orb tiers (small=purple Orb.png, medium=Orb-blue.png, large=Orb-red.png) */
-  XP_ORB_SMALL_VALUE: 1,
-  XP_ORB_MED_VALUE: 3,
-  XP_ORB_LARGE_VALUE: 8,
+  XP_ORB_SMALL_VALUE: 2,
+  XP_ORB_MED_VALUE: 4,
+  XP_ORB_LARGE_VALUE: 10,
   XP_ORB_DROP_P_SMALL: 0.85,
   XP_ORB_DROP_P_MED: 0.12,
   XP_ORB_DROP_P_LARGE: 0.03,

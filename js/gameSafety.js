@@ -1,7 +1,7 @@
 /**
  * Soft caps + NaN guards for playable stats (crash/abuse resilience; no networking auth).
  */
-import { CONFIG } from "./config.js?v=2026-04-30-coop-vs-balance-1";
+import { CONFIG } from "./config.js?v=2026-05-03-xp-progression";
 import { clamp } from "./mathutil.js";
 
 /** @param {unknown} n @param {number} fb */
