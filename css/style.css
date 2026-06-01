@@ -2079,6 +2079,79 @@ html.is-touch-game-chrome #overlay-character-select .character-mp-controls {
   filter: brightness(1.1);
 }
 
+/* 10-minute survivor milestone */
+#overlay-milestone10 .milestone10-wrap {
+  position: relative;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(90vh, 520px);
+}
+
+#overlay-milestone10 .milestone10-confetti {
+  position: absolute;
+  inset: -8% -12% -20% -12%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#overlay-milestone10 .milestone10-panel {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 18px 48px rgba(0, 0, 0, 0.45),
+    0 0 80px rgba(155, 109, 255, 0.12);
+}
+
+#overlay-milestone10 .milestone10-sub {
+  margin-top: 0.35em;
+}
+
+#overlay-milestone10 .milestone10-hint {
+  margin: 10px 0 4px;
+  font-size: 14px;
+  color: rgba(200, 185, 230, 0.92);
+  line-height: 1.45;
+}
+
+#overlay-milestone10 .milestone10-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+#overlay-milestone10 .milestone10-actions .btn-confirm-premium {
+  width: 100%;
+}
+
+#overlay-milestone10 .milestone10-actions .btn-secondary {
+  width: 100%;
+}
+
+@keyframes milestone10-confetti-fall {
+  0% {
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--dx, 0px), 108vh, 0) rotate(640deg);
+    opacity: 0.9;
+  }
+}
+
+.milestone10-confetti-bit {
+  position: absolute;
+  top: -8%;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  opacity: 0.95;
+  animation: milestone10-confetti-fall 2.6s linear infinite;
+  pointer-events: none;
+  will-change: transform;
+}
+
 .hint {
   position: absolute;
   bottom: 10px;

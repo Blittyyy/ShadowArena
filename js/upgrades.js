@@ -540,11 +540,14 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
   const s = stats ?? {};
   const charId = (s && typeof s.characterId === "string" ? s.characterId : "mage") || "mage";
   const level = Number.isFinite(opts?.level) ? Math.max(1, Math.floor(opts.level)) : 1;
+  const recentUpgradeIds = Array.isArray(opts?.recentUpgradeIds) ? opts.recentUpgradeIds : [];
 
   // -------------------------
   // Weapon ownership model
   // -------------------------
   const UNIVERSAL_KEYS = ["dagger", "axe", "boomerang", "lightning", "whip", "hammers"];
+  /** How many different universal weapons (dagger, axe, …) you can unlock in one run. */
+  const MAX_EXTRA_UNIVERSAL_WEAPONS = UNIVERSAL_KEYS.length;
   const UNIVERSAL_UNLOCK_ID = {
     dagger: "dagger_weapon",
     axe: "throwing_axe",
@@ -579,7 +582,7 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
   };
   const ownedUniversalKeys = UNIVERSAL_KEYS.filter((k) => ownsUniversal(k));
   const ownedUniversalCount = ownedUniversalKeys.length;
-  const universalSlotsRemaining = Math.max(0, 3 - ownedUniversalCount);
+  const universalSlotsRemaining = Math.max(0, MAX_EXTRA_UNIVERSAL_WEAPONS - ownedUniversalCount);
 
   const specialId = SPECIAL_BY_CLASS[charId] ?? null;
   const ownsSpecial =
@@ -590,7 +593,7 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
 
   // Total weapons = starting weapon (always) + universals + special
   const totalWeapons = 1 + ownedUniversalCount + (ownsSpecial ? 1 : 0);
-  const hasMaxWeapons = ownedUniversalCount >= 3 && ownsSpecial;
+  const hasMaxWeapons = ownedUniversalCount >= MAX_EXTRA_UNIVERSAL_WEAPONS && ownsSpecial;
 
   const universalKeyForUpgradeId = (id) => {
     for (const k of UNIVERSAL_KEYS) {
@@ -603,6 +606,20 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
   const weightFor = (u) => {
     const base = typeof u.weight === "function" ? u.weight(s) : 1;
     return Number.isFinite(base) ? base : 1;
+  };
+
+  /** Down-rank immediate repeats; gently up-rank shared stats when the build is weapon-heavy. */
+  const pickWeight = (u) => {
+    let w = weightFor(u);
+    const id = u.id;
+    if (recentUpgradeIds.length) {
+      const last = recentUpgradeIds[recentUpgradeIds.length - 1];
+      if (last === id) w *= 0.2;
+      else if (recentUpgradeIds.includes(id)) w *= 0.45;
+    }
+    if (id === "move_speed" && ownedUniversalCount >= 2) w *= 1.28;
+    if (id === "move_speed" && ownedUniversalCount >= 4) w *= 1.12;
+    return w;
   };
 
   // Baseline pool: correct character + not maxed + positive weight.
@@ -653,7 +670,7 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
   const out = [];
   const takeWeightedOne = (candidates) => {
     if (!Array.isArray(candidates) || candidates.length === 0) return null;
-    const weights = candidates.map((u) => weightFor(u));
+    const weights = candidates.map((u) => pickWeight(u));
     const i = weightedPickIndex(candidates, weights, rng);
     return candidates[i] ?? null;
   };
@@ -694,7 +711,7 @@ export function pickThreeUpgrades(stats, rng = Math.random, opts = {}) {
     const candidates = pool.filter((u) => !out.some((x) => x.id === u.id));
     if (candidates.length === 0) break;
     const weights = candidates.map((u) => {
-      let w = weightFor(u);
+      let w = pickWeight(u);
       if (after8 && universalSlotsRemaining > 0 && unlockIds.has(u.id) && !ownedUnlockIds.has(u.id)) {
         w *= 0.25;
       }
@@ -1051,8 +1068,9 @@ export function upgradeChoicePresentation(u, stats) {
     case "berserk_multi_slash":
       return {
         title: "Rending Flurry",
-        description: "Spawn companion blades at cruel new angles.",
-        statLine: "+1 Bonus Slash",
+        description:
+          "Each attack fires an extra red cleave at a slight angle (stack up to three overlapping arcs).",
+        statLine: "+1 bonus slash per swing (max 3)",
       };
     case "berserk_lifesteal":
       return {
@@ -1102,11 +1120,12 @@ export function upgradeCardIconSrc(iconKey) {
 export function upgradeIconLayout(iconKey) {
   const layouts = /** @type {Record<string, { fx: number; fy: number; scale: number }>} */ ({
     hammer: { fx: 50.27, fy: 51.43, scale: 2.12 },
-    boomerang: { fx: 17.43, fy: 49.91, scale: 1.92 },
+    // Single-sprite PNGs: keep focal point centered (sheet-style offsets hide the art).
+    boomerang: { fx: 50, fy: 50, scale: 1.78 },
     axe: { fx: 50.78, fy: 48.08, scale: 2.38 },
     dagger: { fx: 44.73, fy: 50.0, scale: 1.88 },
     lightning: { fx: 36.23, fy: 58.15, scale: 2.05 },
-    rune: { fx: 13.28, fy: 29.25, scale: 2.25 },
+    rune: { fx: 50, fy: 50, scale: 1.78 },
     slam: { fx: 60.16, fy: 48.3, scale: 2.12 },
     grenade: { fx: 51.76, fy: 60.99, scale: 2.15 },
     soul: { fx: 13.92, fy: 49.91, scale: 2.08 },
@@ -1114,7 +1133,7 @@ export function upgradeIconLayout(iconKey) {
     slash: { fx: 60.16, fy: 48.3, scale: 2.12 },
     bow: { fx: 36.23, fy: 58.15, scale: 1.95 },
     bolt: { fx: 49.98, fy: 50.55, scale: 1.78 },
-    speed: { fx: 13.28, fy: 29.25, scale: 2.25 },
+    speed: { fx: 50, fy: 50, scale: 1.78 },
     boot: { fx: 49.98, fy: 50.55, scale: 1.72 },
     spark: { fx: 49.98, fy: 50.55, scale: 1.72 },
   });

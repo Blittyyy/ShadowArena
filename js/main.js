@@ -9,7 +9,7 @@ import {
 import { buildGameSnapshot, applyGameSnapshot } from "./net/snapshotSync.js?v=2026-05-02-stop-dwell";
 import { resolveMultiplayerServerUrl } from "./net/onlineCoop.js?v=2026-04-30-dev-socket-default-1";
 import { loadAssets, revenantAtlasSourceRect } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
-import { Game } from "./game.js?v=2026-05-03-xp-progression";
+import { Game } from "./game.js?v=2026-05-07-hit-jank";
 import {
   upgradeCardIconSrc,
   upgradeChoiceCardMeta,
@@ -19,7 +19,7 @@ import {
 import {
   loadAudioSettings,
   saveAudioSettings,
-} from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
+} from "./audioSettings.js?v=2026-05-07-playback-hotpath";
 import {
   configureJamRedirectHooks,
   ingestJamInboundUrl,
@@ -122,6 +122,10 @@ const goLevel = document.getElementById("go-level");
 const btnRestart = document.getElementById("btn-restart");
 const btnResume = document.getElementById("btn-resume");
 const btnEndRun = document.getElementById("btn-end-run");
+const overlayMilestone10 = document.getElementById("overlay-milestone10");
+const milestone10Confetti = document.getElementById("milestone10-confetti");
+const btnMilestoneContinue = document.getElementById("btn-milestone-continue");
+const btnMilestoneMenu = document.getElementById("btn-milestone-menu");
 const hint = document.getElementById("hint");
 const menuFog = document.getElementById("menu-fog");
 const menuItems = Array.from(document.querySelectorAll("#overlay-menu .menu-item"));
@@ -258,6 +262,38 @@ function formatTime(seconds) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function fillMilestone10Confetti() {
+  if (!milestone10Confetti) return;
+  milestone10Confetti.innerHTML = "";
+  const n = 80;
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement("span");
+    el.className = "milestone10-confetti-bit";
+    el.style.left = `${Math.random() * 100}%`;
+    el.style.animationDelay = `${Math.random() * 2.8}s`;
+    el.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
+    const dx = (Math.random() - 0.5) * 120;
+    el.style.setProperty("--dx", `${dx}px`);
+    el.style.backgroundColor = `hsl(${Math.floor(Math.random() * 360)}, 88%, ${52 + Math.random() * 22}%)`;
+    el.style.transform = `rotate(${Math.random() * 360}deg)`;
+    milestone10Confetti.appendChild(el);
+  }
+}
+
+function showMilestone10() {
+  if (!overlayMilestone10) return;
+  fillMilestone10Confetti();
+  overlayMilestone10.classList.remove("hidden");
+  overlayMilestone10.setAttribute("aria-hidden", "false");
+}
+
+function hideMilestone10() {
+  if (!overlayMilestone10) return;
+  overlayMilestone10.classList.add("hidden");
+  overlayMilestone10.setAttribute("aria-hidden", "true");
+  if (milestone10Confetti) milestone10Confetti.innerHTML = "";
 }
 
 function syncHud(game) {
@@ -409,6 +445,7 @@ function hideGameOver() {
 }
 
 function refreshOverlays(game) {
+  if (!game) return;
   if (game.mode === "levelUp") {
     showLevelUp(game);
   } else {
@@ -423,6 +460,14 @@ function refreshOverlays(game) {
     showGameOver(game);
   } else {
     hideGameOver();
+  }
+  if (game.mode === "congrats10") {
+    showMilestone10();
+  } else {
+    hideMilestone10();
+  }
+  if (game && typeof game._prevOverlayMode !== "undefined") {
+    game._prevOverlayMode = game.mode;
   }
 }
 
@@ -802,6 +847,7 @@ async function main() {
   window.addEventListener("keydown", (e) => {
     if (screen !== "game" || !game) return;
     if (e.code !== "Escape" || e.repeat) return;
+    if (game.mode === "congrats10") return;
     if (game.mode === "playing") {
       e.preventDefault();
       game.pause();
@@ -1217,15 +1263,18 @@ async function main() {
   };
 
   let gameUiBound = false;
+  /** Assigned in bindGameUiOnce; used by online host milestone relay. */
+  let quitRunToMainMenu = () => {};
 
   function bindGameUiOnce() {
     if (gameUiBound) return;
     gameUiBound = true;
 
-    btnRestart.addEventListener("click", () => {
+    quitRunToMainMenu = () => {
       hidePause();
       hideGameOver();
       hideLevelUp();
+      hideMilestone10();
       try {
         if (gOnlineSession?.socket) {
           gOnlineSession.socket.emit("room:leave");
@@ -1242,6 +1291,41 @@ async function main() {
       game = null;
       setScreen("menu");
       refreshAudioSlidersFromStorage();
+    };
+
+    btnRestart.addEventListener("click", () => quitRunToMainMenu());
+
+    const applyMilestone10Choice = (action) => {
+      if (!game) return;
+      if (action === "menu") {
+        quitRunToMainMenu();
+        return;
+      }
+      game.dismissSurvival10MinContinue?.();
+      refreshOverlays(game);
+    };
+
+    btnMilestoneContinue?.addEventListener("click", () => {
+      if (gOnlineSession?.role === "client") {
+        try {
+          gOnlineSession.socket.emit("game:milestone10", { action: "continue" });
+        } catch {
+          //
+        }
+        return;
+      }
+      applyMilestone10Choice("continue");
+    });
+    btnMilestoneMenu?.addEventListener("click", () => {
+      if (gOnlineSession?.role === "client") {
+        try {
+          gOnlineSession.socket.emit("game:milestone10", { action: "menu" });
+        } catch {
+          //
+        }
+        return;
+      }
+      applyMilestone10Choice("menu");
     });
 
     btnResume.addEventListener("click", () => {
@@ -1308,6 +1392,10 @@ async function main() {
       }
 
       game.update(dt);
+
+      if (game.netMode !== "client" && game.mode !== game._prevOverlayMode) {
+        refreshOverlays(game);
+      }
 
       // Host: deadman timeout for remote seats (fix "keeps moving after releasing keys").
       if (gOnlineSession?.role === "host" && game.netMode === "host") {
@@ -1402,6 +1490,9 @@ async function main() {
       }
       if (game.mode === "gameOver" && overlayGameOver.classList.contains("hidden")) {
         showGameOver(game);
+      }
+      if (game.mode === "congrats10" && overlayMilestone10?.classList.contains("hidden")) {
+        showMilestone10();
       }
 
       hintT += dt;
@@ -1500,6 +1591,7 @@ async function main() {
       seatDisplayNames: seatDisplayNamesFromRoster(roster),
     };
     setOnlineHostBridge(0);
+    bindGameUiOnce();
 
     socket.off("game:inputRelay");
     socket.on("game:inputRelay", ({ seat, ax, ay, seq }) => {
@@ -1531,6 +1623,16 @@ async function main() {
       }
       refreshOverlays(game);
     });
+    socket.off("game:milestone10Relay");
+    socket.on("game:milestone10Relay", ({ action }) => {
+      const a = action === "menu" ? "menu" : "continue";
+      if (a === "menu") {
+        quitRunToMainMenu();
+        return;
+      }
+      game?.dismissSurvival10MinContinue?.();
+      refreshOverlays(game);
+    });
 
     refreshOverlays(game);
     syncHud(game);
@@ -1543,7 +1645,6 @@ async function main() {
       hint.style.opacity = "0.9";
     }
 
-    bindGameUiOnce();
     startGameFrameLoop();
   }
 

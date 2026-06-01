@@ -40,12 +40,29 @@ export function loadAudioSettings() {
   }
 }
 
+/** Memo for gameplay SFX — avoids synchronous localStorage reads on hot paths (hits). */
+let _playbackMemo = /** @type {AudioSettings | null} */ (null);
+
+/** @returns {AudioSettings} */
+export function playbackAudioSnapshot() {
+  if (!_playbackMemo) _playbackMemo = loadAudioSettings();
+  return _playbackMemo;
+}
+
+/** Call when stored prefs change outside `saveAudioSettings` / `reset`. */
+export function invalidatePlaybackAudioCache() {
+  _playbackMemo = null;
+}
+
 /**
  * @param {Partial<AudioSettings>} patch
  * @returns {AudioSettings}
  */
 export function saveAudioSettings(patch) {
-  const next = { ...loadAudioSettings(), ...patch };
+  const next = {
+    ...playbackAudioSnapshot(),
+    ...patch,
+  };
   next.musicVolume = clamp01(Number(next.musicVolume));
   next.sfxVolume = clamp01(Number(next.sfxVolume));
   try {
@@ -53,6 +70,7 @@ export function saveAudioSettings(patch) {
   } catch {
     // ignore (private mode / quota)
   }
+  _playbackMemo = { musicVolume: next.musicVolume, sfxVolume: next.sfxVolume };
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     window.dispatchEvent(new CustomEvent("shadowArenaAudioSettingsChanged", { detail: next }));
   }
@@ -67,8 +85,19 @@ export function resetAudioSettingsToDefaults() {
   } catch {
     // ignore (private mode / quota)
   }
+  _playbackMemo = { musicVolume: d.musicVolume, sfxVolume: d.sfxVolume };
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     window.dispatchEvent(new CustomEvent("shadowArenaAudioSettingsChanged", { detail: d }));
   }
   return d;
+}
+
+let __storageInvalidateInstalled = false;
+if (typeof window !== "undefined" && !__storageInvalidateInstalled) {
+  __storageInvalidateInstalled = true;
+  window.addEventListener("storage", (ev) => {
+    const k = ev.key;
+    if (k !== AUDIO_SETTINGS_STORAGE_KEY && k !== LEGACY_AUDIO_KEY) return;
+    invalidatePlaybackAudioCache();
+  });
 }

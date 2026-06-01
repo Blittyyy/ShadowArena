@@ -59,7 +59,7 @@ export function sanitizePlayerStats(st) {
   st.slashCooldownMult = clamp(finiteOr(st.slashCooldownMult, 1), cdMin, cdMax);
   st.slashRangeMult = clamp(finiteOr(st.slashRangeMult, 1), 0.35, CONFIG.SAFETY_SLASH_GEOM_MULT_MAX ?? 5);
   st.slashArcMult = clamp(finiteOr(st.slashArcMult, 1), 0.35, CONFIG.SAFETY_SLASH_GEOM_MULT_MAX ?? 5);
-  st.multiSlash = clamp(Math.round(finiteOr(st.multiSlash, 1)), 1, 8);
+  st.multiSlash = clamp(Math.round(finiteOr(st.multiSlash, 1)), 1, 3);
   st.lifestealPct = clamp(finiteOr(st.lifestealPct, 0), 0, CONFIG.SAFETY_LIFESTEAL_MAX_FRAC ?? 0.35);
 
   st.groundSlamDamageMult = clamp(finiteOr(st.groundSlamDamageMult, 1), dmgMin, dmgMax * 2);
@@ -122,7 +122,8 @@ export function sanitizePlayerEntity(p) {
 
   const mhp = Math.max(1, finiteOr(p.maxHp, CONFIG.PLAYER_MAX_HP));
   p.maxHp = mhp;
-  if (!Number.isFinite(p.hp) || p.hp < 0 || p.hp > mhp * 4) {
+  // Overshoot below 0 is normal after damage ticks; clamp to 0 — do NOT treat as “corrupt” (that was full-healing ghosts).
+  if (!Number.isFinite(p.hp) || p.hp > mhp * 4) {
     p.hp = mhp;
   } else {
     p.hp = clamp(p.hp, 0, mhp * 2);

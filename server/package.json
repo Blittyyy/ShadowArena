@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "echo \"Room server: no compile step\"",
     "start": "node index.mjs"
   },
   "dependencies": {

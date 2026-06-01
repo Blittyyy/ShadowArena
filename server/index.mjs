@@ -1,6 +1,6 @@
 /**
  * Room relay + lobby for Shadow Arena online co-op (host-driven sim on a client).
- * Deploy separately (Railway/Render/Fly). Set ALLOWED_ORIGINS for production CORS.
+ * Deploy on Render (see ../render.yaml) or Fly. Set ALLOWED_ORIGINS for production CORS.
  */
 import http from "http";
 import express from "express";
@@ -256,6 +256,15 @@ io.on("connection", (socket) => {
       seat: room.members.get(socket.id)?.seat ?? 0,
       upgradeId: String(payload?.upgradeId || ""),
     });
+  });
+
+  socket.on("game:milestone10", (payload) => {
+    const code = socket.data.roomCode;
+    const room = code ? rooms.get(code) : null;
+    if (!room || !room.started || socket.id === room.hostId) return;
+    const raw = String(payload?.action || "").toLowerCase();
+    const action = raw === "menu" ? "menu" : "continue";
+    io.to(room.hostId).emit("game:milestone10Relay", { action });
   });
 
   socket.on("disconnect", () => {

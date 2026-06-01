@@ -1,0 +1,18 @@
+# Render Blueprint — Socket.IO room relay ONLY (not the static Vite/game site).
+# IMPORTANT: rootDir must be `server`. If logs show `serve -l 5173`, the wrong folder is deployed.
+# Service URL: https://shadowarena.onrender.com (match MULTIPLAYER_SERVER_URL in the build).
+services:
+  - type: web
+    name: shadowarena
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://shadow-arena-five.vercel.app
+      # Optional local testing from http://localhost:5173 — uncomment:
+      # - key: ALLOWED_ORIGINS
+      #   value: https://shadow-arena-five.vercel.app,http://localhost:5173

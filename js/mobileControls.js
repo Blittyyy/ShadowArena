@@ -184,7 +184,8 @@ export function initMobileGameControls(opts) {
     const playing = inGame && game.mode === "playing";
     const paused = inGame && game.mode === "paused";
     const levelUp = inGame && game.mode === "levelUp";
-    const show = mobile && inGame && (playing || paused || levelUp);
+    const milestone10 = inGame && game.mode === "congrats10";
+    const show = mobile && inGame && (playing || paused || levelUp) && !milestone10;
 
     root.classList.toggle("is-active", show);
     root.classList.toggle("hidden", !show);

@@ -1,5 +1,5 @@
 import { CONFIG, ENEMY_TYPES, viewWorldW, viewWorldH } from "./config.js?v=2026-05-03-xp-progression";
-import { loadAudioSettings } from "./audioSettings.js?v=2026-04-30-coop-vs-balance-1";
+import { playbackAudioSnapshot } from "./audioSettings.js?v=2026-05-07-playback-hotpath";
 import { clamp, dist, angle, randRange } from "./mathutil.js";
 import { getMovement, interactHeldForSeat, interactKeyHintForSeat } from "./input.js";
 import {
@@ -43,6 +43,7 @@ import {
 } from "./assets.js?v=2026-04-30-coop-vs-balance-1";
 import { pickThreeUpgrades, createBaseStats } from "./upgrades.js";
 import { sanitizePlayerEntity, sanitizePlayerStats } from "./gameSafety.js?v=2026-04-30-coop-vs-balance-1";
+import { detectMobilePerfProfile } from "./mobilePerf.js?v=2026-05-06-coarse-perf";
 import {
   computeExitPortal,
   computeReturnPortal,
@@ -171,16 +172,27 @@ function applyArenaCollisionSlideEnemy(x, y, nx, ny, radius) {
 /**
  * Unified enemy hit circle used by *all* weapons (prevents “visible hits don’t register”).
  * Keeps ENEMY_TYPES.radius as a baseline but expands it to better match sprite footprint.
+ * @param {{ x: number; y: number; r: number }} o — mutated and returned (avoids allocating on hot paths).
  */
-function enemyHitCircle(e) {
+function enemyHitCircleInto(e, o) {
   const def = ENEMY_TYPES[e.typeId];
   const baseR = def?.radius ?? 10;
   const isBoss = def?.isBoss || e.isBoss;
   const small = baseR <= 12;
   const rMult = isBoss ? 1.75 : small ? 1.55 : 1.28;
   const yOff = isBoss ? Math.min(24, baseR * 0.22) : small ? Math.min(10, baseR * 0.12) : Math.min(14, baseR * 0.15);
-  return { x: e.x, y: e.y - yOff, r: baseR * rMult };
+  o.x = e.x;
+  o.y = e.y - yOff;
+  o.r = baseR * rMult;
+  return o;
 }
+
+function enemyHitCircle(e) {
+  return enemyHitCircleInto(e, { x: 0, y: 0, r: 0 });
+}
+
+/** Hot-path scratch for `enemyHitCircleInto`; game loop is single-threaded. */
+const _enemyHCScr = { x: 0, y: 0, r: 0 };
 
 function nearestBossWithinRadius(enemies, px, py, radius) {
   const R = typeof radius === "number" ? radius : 0;
@@ -583,6 +595,23 @@ export class Game {
     this.vibeJamReturn = null;
     /** @type {{ active: boolean; line1: string; line2: string; progress: number } | null} */
     this.jamPortalHud = null;
+    /** Touch-only perf path: pools + lighter canvas bookkeeping (desktop unaffected). */
+    this._mobilePerf = detectMobilePerfProfile();
+    this._particlePool = [];
+    this._floatTextPool = [];
+    this._canvasLayoutDirty = true;
+    this._mobileCanvasObsSetup = false;
+    /** @type {ResizeObserver | null} */
+    this._mobileCanvasRO = null;
+    this._cachedBw = 0;
+    this._cachedBh = 0;
+    /** Coarse-pointer: enemy spatial bins rebuilt each sim tick when horde is large. */
+    this._mobileEnemySpatialActive = false;
+    /** @type {Map<string, any[]> | null} */
+    this._mobileEnemyBins = null;
+    this._enemyCandNear = [];
+    this._enemyCandStamp = 0;
+
     this.reset();
   }
 
@@ -658,7 +687,13 @@ export class Game {
     this.nextEnemyId = 1;
     this.projectiles = [];
     this.xpOrbs = [];
+    if (this._mobilePerf && this.particles?.length) {
+      for (const p of this.particles) this._particlePool.push(p);
+    }
     this.particles = [];
+    if (this._mobilePerf && this.floatTexts?.length) {
+      for (const f of this.floatTexts) this._floatTextPool.push(f);
+    }
     this.floatTexts = [];
     this._netPendingEvents = [];
     this._netLastSteerWallMs = 0;
@@ -675,6 +710,11 @@ export class Game {
     this.pendingUpgrades = [];
     this.levelUpsPending = 0;
     this.animTick = 0;
+    this.recentUpgradeIdsBySeat = [[], [], [], []];
+    /** After "Continue unlimited", 10m milestone is not shown again this run. */
+    this.survival10mChoiceDone = false;
+    /** Last mode synced to DOM overlays (solo/host); see `main.js` frame loop. */
+    this._prevOverlayMode = this.mode;
     // Legacy single-player draw state mirrors player 1 (used by UI/animations in a few places).
     this.playerFacingRight = true;
     this.playerWalkKind = "down";
@@ -980,7 +1020,8 @@ export class Game {
       }
     };
     if (boss) pushIf(boss);
-    for (const e of this.enemies) pushIf(e);
+    const candSr = this._enemyCandidatesNearWorld(player.x, player.y, maxD + 150);
+    for (let si = 0; si < candSr.length; si++) pushIf(candSr[si]);
     scored.sort((a, b) => a.d - b.d);
     const uniq = scored.map((s) => s.e);
     const out = [];
@@ -1091,8 +1132,10 @@ export class Game {
   }
 
   _ensureEnemySfxPools() {
+    const nHit = this._mobilePerf ? 14 : 8;
+    const nDeath = this._mobilePerf ? 6 : 4;
     if (!this._sfxHitPool) {
-      this._sfxHitPool = Array.from({ length: 8 }, () => {
+      this._sfxHitPool = Array.from({ length: nHit }, () => {
         const a = new Audio(SFX_ENEMY_HIT_SRC);
         a.preload = "auto";
         a.volume = 0.55;
@@ -1101,7 +1144,7 @@ export class Game {
       this._sfxHitPoolIx = 0;
     }
     if (!this._sfxDeathPool) {
-      this._sfxDeathPool = Array.from({ length: 4 }, () => {
+      this._sfxDeathPool = Array.from({ length: nDeath }, () => {
         const a = new Audio(SFX_ENEMY_DEATH_SRC);
         a.preload = "auto";
         a.volume = 0.65;
@@ -1112,13 +1155,16 @@ export class Game {
   }
 
   tryPlayEnemyHitSfx(e) {
-    const g = Math.max(0, Math.min(1, Number(loadAudioSettings().sfxVolume ?? 1)));
+    const g = Math.max(0, Math.min(1, Number(playbackAudioSnapshot().sfxVolume ?? 1)));
     if (g <= 0.0001) return;
     if (!e) return;
     const t = this.time ?? 0;
     e._sfxHitT = e._sfxHitT ?? -999;
-    if (t - e._sfxHitT < 0.055) return;
-    if (t - (this._sfxHitGlobalT ?? -999) < 0.02) return;
+    /** Mobile: widen gaps — HTMLAudio `play`/seek dominates frame time vs desktop. */
+    const perEnemyMin = this._mobilePerf ? 0.095 : 0.055;
+    const globalMin = this._mobilePerf ? 0.085 : 0.02;
+    if (t - e._sfxHitT < perEnemyMin) return;
+    if (t - (this._sfxHitGlobalT ?? -999) < globalMin) return;
     e._sfxHitT = t;
     this._sfxHitGlobalT = t;
     this._ensureEnemySfxPools();
@@ -1127,7 +1173,23 @@ export class Game {
     const a = pool[this._sfxHitPoolIx++ % pool.length];
     try {
       a.volume = 0.55 * g;
-      a.currentTime = 0;
+      if (!this._mobilePerf) {
+        try {
+          a.currentTime = 0;
+        } catch {
+          //
+        }
+      } else {
+        /** Mobile: unconditional `currentTime = 0` spikes WebKit — only rewind mid-sample. */
+        try {
+          const ct = Number(a.currentTime);
+          if (!Number.isFinite(ct) || ct > 0.06) {
+            a.currentTime = 0;
+          }
+        } catch {
+          //
+        }
+      }
       void a.play();
     } catch {
       // ignore (autoplay / decode)
@@ -1135,7 +1197,7 @@ export class Game {
   }
 
   playEnemyDeathSfx() {
-    const g = Math.max(0, Math.min(1, Number(loadAudioSettings().sfxVolume ?? 1)));
+    const g = Math.max(0, Math.min(1, Number(playbackAudioSnapshot().sfxVolume ?? 1)));
     if (g <= 0.0001) return;
     this._ensureEnemySfxPools();
     const pool = this._sfxDeathPool;
@@ -1151,8 +1213,9 @@ export class Game {
   }
 
   _ensureMiscSfxPools() {
+    const nXp = this._mobilePerf ? 9 : 6;
     if (!this._sfxXpPool) {
-      this._sfxXpPool = Array.from({ length: 6 }, () => {
+      this._sfxXpPool = Array.from({ length: nXp }, () => {
         const a = new Audio(SFX_XP_PICKUP_SRC);
         a.preload = "auto";
         a.volume = 0.48;
@@ -1161,7 +1224,7 @@ export class Game {
       this._sfxXpPoolIx = 0;
     }
     if (!this._sfxLevelUpPool) {
-      this._sfxLevelUpPool = Array.from({ length: 2 }, () => {
+      this._sfxLevelUpPool = Array.from({ length: this._mobilePerf ? 3 : 2 }, () => {
         const a = new Audio(SFX_LEVEL_UP_SRC);
         a.preload = "auto";
         a.volume = 0.52;
@@ -1172,7 +1235,7 @@ export class Game {
   }
 
   playXpPickupSfx() {
-    const g = Math.max(0, Math.min(1, Number(loadAudioSettings().sfxVolume ?? 1)));
+    const g = Math.max(0, Math.min(1, Number(playbackAudioSnapshot().sfxVolume ?? 1)));
     if (g <= 0.0001) return;
     this._ensureMiscSfxPools();
     const pool = this._sfxXpPool;
@@ -1188,7 +1251,7 @@ export class Game {
   }
 
   playLevelUpSfx() {
-    const g = Math.max(0, Math.min(1, Number(loadAudioSettings().sfxVolume ?? 1)));
+    const g = Math.max(0, Math.min(1, Number(playbackAudioSnapshot().sfxVolume ?? 1)));
     if (g <= 0.0001) return;
     this._ensureMiscSfxPools();
     const pool = this._sfxLevelUpPool;
@@ -1249,8 +1312,10 @@ export class Game {
     const halfArc = (s.arc ?? 0) * 0.5;
     const ox = s.x;
     const oy = s.y;
-    for (const e of this.enemies) {
-      const hc = enemyHitCircle(e);
+    const candSlash = this._enemyCandidatesNearWorld(ox, oy, (s.range ?? 0) + 130);
+    for (let si = 0; si < candSlash.length; si++) {
+      const e = candSlash[si];
+      const hc = enemyHitCircleInto(e, _enemyHCScr);
       const dx = hc.x - ox;
       const dy = hc.y - oy;
       const d = Math.hypot(dx, dy);
@@ -1347,6 +1412,93 @@ export class Game {
     }
   }
 
+  /** Hammer orbit radius in world px (includes mage bonus), or 0 if this seat has no hammers. */
+  hammerOrbitWorldRadius(pl) {
+    if (!pl) return 0;
+    const st = pl.stats ?? this.stats;
+    const hs = pl.hammers ?? [];
+    if (hs.length <= 0) return 0;
+    const base = (CONFIG.HAMMER_ORBIT_RADIUS ?? 80) * (st.hammerOrbitRadius ?? 1);
+    const bonus =
+      (pl.characterId ?? st.characterId) === "mage"
+        ? CONFIG.HAMMER_ORBIT_RADIUS_MAGE_BONUS ?? 0
+        : 0;
+    return base + bonus;
+  }
+
+  /** True when coarse-pointer sim should rebuild enemy buckets this frame (large hordes). */
+  _mobileEnemySpatialEligible() {
+    return (
+      !!this._mobilePerf &&
+      (this.enemies?.length ?? 0) >= (CONFIG.MOBILE_ENEMY_SPATIAL_MIN ?? 22)
+    );
+  }
+
+  _rebuildMobileEnemySpatialBins() {
+    const cell = CONFIG.MOBILE_ENEMY_CELL_WORLD ?? 200;
+    let map = this._mobileEnemyBins;
+    if (!map) {
+      map = new Map();
+      this._mobileEnemyBins = map;
+    } else {
+      for (const row of map.values()) row.length = 0;
+    }
+    const es = this.enemies;
+    for (let i = 0; i < es.length; i++) {
+      const e = es[i];
+      if (!e) continue;
+      const k = `${Math.floor(e.x / cell)},${Math.floor(e.y / cell)}`;
+      let arr = map.get(k);
+      if (!arr) {
+        arr = [];
+        map.set(k, arr);
+      }
+      arr.push(e);
+    }
+  }
+
+  /**
+   * Enemies possibly interacting with world point `x,y` within ~`reach` px (caller widens by hit radii).
+   * Result array is reused; desktop / small hordes = full enemy list scan (unchanged asymptotics).
+   */
+  _enemyCandidatesNearWorld(x, y, reach) {
+    const out = this._enemyCandNear;
+    const full = this.enemies;
+    out.length = 0;
+    if (!(this._mobileEnemySpatialActive && this._mobileEnemyBins) || full.length === 0) {
+      for (let i = 0; i < full.length; i++) out.push(full[i]);
+      return out;
+    }
+
+    let tag = ++this._enemyCandStamp;
+    if (tag >= 2100000000) {
+      this._enemyCandStamp = tag = 1;
+      for (let i = 0; i < full.length; i++) {
+        if (full[i]) full[i]._mobNt = 0;
+      }
+    }
+
+    const cell = CONFIG.MOBILE_ENEMY_CELL_WORLD ?? 200;
+    const map = this._mobileEnemyBins;
+    const ix = Math.floor(x / cell);
+    const iy = Math.floor(y / cell);
+    const ring = Math.max(1, Math.ceil(((reach ?? 96) + 130) / cell));
+
+    for (let dy = -ring; dy <= ring; dy++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        const bin = map.get(`${ix + dx},${iy + dy}`);
+        if (!bin?.length) continue;
+        for (let b = 0; b < bin.length; b++) {
+          const e = bin[b];
+          if (!e || e._mobNt === tag) continue;
+          e._mobNt = tag;
+          out.push(e);
+        }
+      }
+    }
+    return out;
+  }
+
   syncArcaneRunes() {
     const lvl = this.stats.arcaneRunesLvl ?? 0;
     const base = CONFIG.ARCANE_RUNES_BASE_COUNT ?? 2;
@@ -1406,14 +1558,11 @@ export class Game {
 
       const orbitSpeed =
         (CONFIG.ARCANE_RUNES_ORBIT_SPEED ?? 3.1) * (st.arcaneRunesOrbitSpeedMult ?? 1);
-      const hammerR =
-        (pl.hammers?.length ?? 0) > 0
-          ? ((CONFIG.HAMMER_ORBIT_RADIUS ?? 80) * (st.hammerOrbitRadius ?? 1)) +
-            (((pl.characterId ?? st.characterId) === "mage") ? (CONFIG.HAMMER_ORBIT_RADIUS_MAGE_BONUS ?? 0) : 0)
-          : 0;
+      const hammerR = this.hammerOrbitWorldRadius(pl);
       const baseR =
         (CONFIG.ARCANE_RUNES_ORBIT_RADIUS ?? 108) * (st.arcaneRunesOrbitRadiusMult ?? 1);
-      const radius = Math.max(baseR, hammerR + 26);
+      const pad = CONFIG.ARCANE_RUNES_CLEARANCE_BEYOND_HAMMER_ORBIT ?? 42;
+      const radius = Math.max(baseR, hammerR + pad);
 
       const hitR = (CONFIG.ARCANE_RUNES_HIT_RADIUS ?? 18);
       const cooldown = (CONFIG.ARCANE_RUNES_HIT_COOLDOWN ?? 0.2);
@@ -1433,14 +1582,16 @@ export class Game {
         return { r, i, a, x, y };
       });
 
-      // Continuous contact damage with per-enemy cooldown.
-      for (let ei = this.enemies.length - 1; ei >= 0; ei--) {
-        const e = this.enemies[ei];
+      /** One spatial query vs per-rune/per-enemy (touch hordes). */
+      const candArc = this._enemyCandidatesNearWorld(pl.x, pl.y, radius + hitR + 150);
+
+      arcE: for (let aj = 0; aj < candArc.length; aj++) {
+        const e = candArc[aj];
         const hitMap =
           e.arcaneRuneHitUntilMap instanceof Map
             ? e.arcaneRuneHitUntilMap
             : (e.arcaneRuneHitUntilMap = new Map());
-        const hc = enemyHitCircle(e);
+        const hc = enemyHitCircleInto(e, _enemyHCScr);
         for (const pos of positions) {
           const runeKey = `${ownerIndex}:${pos.i}`;
           if (this.time < (hitMap.get(runeKey) ?? 0)) continue;
@@ -1454,7 +1605,7 @@ export class Game {
             hitMap.set(runeKey, this.time + cooldown);
             this.spawnHitParticles(hc.x, hc.y);
             this.addFloatText(e.x, e.y - (ENEMY_TYPES[e.typeId]?.radius ?? 10) - 4, Math.ceil(dmg).toString(), "#cdb6ff");
-            if (dead) break;
+            if (dead) break arcE;
           }
         }
       }
@@ -1566,8 +1717,10 @@ export class Game {
 
     // One-time AOE burst.
     const killed = [];
-    for (const e of this.enemies) {
-      const hc = enemyHitCircle(e);
+    const candTx = this._enemyCandidatesNearWorld(x, y, r + 145);
+    for (let ti = 0; ti < candTx.length; ti++) {
+      const e = candTx[ti];
+      const hc = enemyHitCircleInto(e, _enemyHCScr);
       if (dist(hc.x, hc.y, x, y) >= r + hc.r * 0.25) continue;
       e.hitFlash = CONFIG.HIT_FLASH_DURATION;
       this.spawnHitParticles(hc.x, hc.y);
@@ -1662,7 +1815,7 @@ export class Game {
         for (let k = 0; k < n; k++) {
           const a = Math.random() * Math.PI * 2;
           const s = randRange(90, 240);
-          this.particles.push({
+          this._particlePush({
             x: ex.x,
             y: ex.y,
             vx: Math.cos(a) * s,
@@ -1690,21 +1843,25 @@ export class Game {
       const tickDmg =
         this.getEffectiveDamage(this.player) * (CONFIG.ARCHER_TOXIC_CLOUD_TICK_DAMAGE_MULT ?? 0.22);
       const killed = [];
-      for (const e of this.enemies) {
-        let inside = false;
-        for (const c of this.toxicClouds) {
-          const hc = enemyHitCircle(e);
-          if (dist(hc.x, hc.y, c.x, c.y) < (c.r ?? 0) + hc.r * 0.15) {
-            inside = true;
-            break;
+      /** @type {Set<number|string>} */
+      const cloudDotDealt = new Set();
+      for (let cci = 0; cci < this.toxicClouds.length; cci++) {
+        const c = this.toxicClouds[cci];
+        const cr = (c.r ?? 0) + 150;
+        const candCl = this._enemyCandidatesNearWorld(c.x, c.y, cr);
+        for (let ei = 0; ei < candCl.length; ei++) {
+          const e = candCl[ei];
+          const ek = Number.isFinite(e.id) ? e.id : e;
+          if (cloudDotDealt.has(ek)) continue;
+          const hc = enemyHitCircleInto(e, _enemyHCScr);
+          if (dist(hc.x, hc.y, c.x, c.y) >= (c.r ?? 0) + hc.r * 0.15) continue;
+          cloudDotDealt.add(ek);
+          if (this.applyEnemyDamage(e, tickDmg, { skipHitSfx: true })) {
+            killed.push(e);
+            continue;
           }
+          if (e.hitFlash <= 0) e.hitFlash = CONFIG.HIT_FLASH_DURATION * 0.25;
         }
-        if (!inside) continue;
-        if (this.applyEnemyDamage(e, tickDmg, { skipHitSfx: true })) {
-          killed.push(e);
-          continue;
-        }
-        if (e.hitFlash <= 0) e.hitFlash = CONFIG.HIT_FLASH_DURATION * 0.25;
       }
       for (const e of killed) this.killEnemy(e);
     }
@@ -1729,7 +1886,7 @@ export class Game {
         const da = Math.random() * Math.PI * 2;
         const up = randRange(6, 20);
         const life = randRange(0.55, 1.05);
-        this.particles.push({
+        this._particlePush({
           x: px,
           y: py,
           vx: Math.cos(da) * drift,
@@ -1761,7 +1918,9 @@ export class Game {
       const px = pl.x;
       const py = pl.y;
       const r2 = radius * radius;
-      for (const e of this.enemies) {
+      const candSp = this._enemyCandidatesNearWorld(px, py, radius + 50);
+      for (let spi = 0; spi < candSp.length; spi++) {
+        const e = candSp[spi];
         const dx = e.x - px;
         const dy = e.y - py;
         const d2 = dx * dx + dy * dy;
@@ -1801,9 +1960,7 @@ export class Game {
 
       const orbitSpeed = (CONFIG.HAMMER_ORBIT_SPEED ?? 0) * (st.hammerOrbitSpeed ?? 1);
       const spinSpeed = CONFIG.HAMMER_SPIN_SPEED ?? 0;
-      const baseRadius = (CONFIG.HAMMER_ORBIT_RADIUS ?? 80) * (st.hammerOrbitRadius ?? 1);
-      const mageBonus = this.characterId === "mage" ? (CONFIG.HAMMER_ORBIT_RADIUS_MAGE_BONUS ?? 0) : 0;
-      const radius = baseRadius + mageBonus;
+      const radius = this.hammerOrbitWorldRadius(pl);
       const hitR = (CONFIG.HAMMER_HIT_RADIUS ?? 12) * (st.hammerSize ?? 1);
       const dmg = (CONFIG.HAMMER_BASE_DAMAGE ?? 10) * (st.damageMult ?? 1);
 
@@ -1816,8 +1973,9 @@ export class Game {
         return { x: pl.x + Math.cos(ang) * radius, y: pl.y + Math.sin(ang) * radius };
       });
 
-      for (let ei = this.enemies.length - 1; ei >= 0; ei--) {
-        const e = this.enemies[ei];
+      const candHm = this._enemyCandidatesNearWorld(pl.x, pl.y, radius + hitR + 115);
+      for (let hj = 0; hj < candHm.length; hj++) {
+        const e = candHm[hj];
         if (this.time < (e.hammerHitUntil ?? 0)) continue;
         const def = ENEMY_TYPES[e.typeId];
         let hit = false;
@@ -1852,6 +2010,13 @@ export class Game {
     if (this.netMode === "client") {
       if (this.mode === "paused") {
         this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+        return;
+      }
+      if (this.mode === "congrats10") {
+        this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+        this.animTick += dt;
+        this.updateParticles(dt);
+        this.updateFloatTexts(dt);
         return;
       }
       this.animTick += dt;
@@ -1909,7 +2074,32 @@ export class Game {
       return;
     }
 
+    if (this.mode === "congrats10") {
+      this.shake = Math.max(0, this.shake - dt * CONFIG.SCREEN_SHAKE_DECAY);
+      this.animTick += dt;
+      this.updateParticles(dt);
+      this.updateFloatTexts(dt);
+      return;
+    }
+
     this.time += dt;
+
+    const milestoneSec = Math.max(60, Number(CONFIG.SURVIVAL_MILESTONE_10_MIN_SECONDS ?? 600));
+    if (
+      this.mode === "playing" &&
+      !this.survival10mChoiceDone &&
+      this.time >= milestoneSec
+    ) {
+      this.mode = "congrats10";
+      return;
+    }
+
+    if (this._mobileEnemySpatialEligible()) {
+      this._rebuildMobileEnemySpatialBins();
+      this._mobileEnemySpatialActive = true;
+    } else {
+      this._mobileEnemySpatialActive = false;
+    }
 
     this.trySpawnBoss1();
     this.trySpawnBoss2();
@@ -2102,8 +2292,10 @@ export class Game {
     const kb = (CONFIG.GROUND_SLAM_KNOCKBACK_DIST ?? 16) * kbMult;
 
     let hitAny = false;
-    for (const e of this.enemies) {
-      const hc = enemyHitCircle(e);
+    const candSlam = this._enemyCandidatesNearWorld(px, py, r + 130);
+    for (let sj = 0; sj < candSlam.length; sj++) {
+      const e = candSlam[sj];
+      const hc = enemyHitCircleInto(e, _enemyHCScr);
       const dx = hc.x - px;
       const dy = hc.y - py;
       const d = Math.hypot(dx, dy);
@@ -2184,9 +2376,11 @@ export class Game {
           const py = nx;
           const cx = s.x + nx * (off + effLen * 0.5);
           const cy = s.y + ny * (off + effLen * 0.5);
-          for (const e of this.enemies) {
+          const candWp = this._enemyCandidatesNearWorld(cx, cy, halfL + halfW + 115);
+          for (let wi = 0; wi < candWp.length; wi++) {
+            const e = candWp[wi];
             if (hit.has(e)) continue;
-            const hc = enemyHitCircle(e);
+            const hc = enemyHitCircleInto(e, _enemyHCScr);
             const dx = hc.x - cx;
             const dy = hc.y - cy;
             const along = dx * nx + dy * ny;
@@ -2550,6 +2744,13 @@ export class Game {
     if (this.mode === "paused") this.mode = "playing";
   }
 
+  /** Resume run after 10-minute congratulations (host / solo). */
+  dismissSurvival10MinContinue() {
+    if (this.mode !== "congrats10") return;
+    this.survival10mChoiceDone = true;
+    this.mode = "playing";
+  }
+
   /** End the run immediately (same stats screen as death, different title). */
   endRun() {
     if (this.mode === "gameOver" || this.mode === "levelUp") return;
@@ -2760,7 +2961,9 @@ export class Game {
     }
 
     let contactDps = 0;
-    for (const e of this.enemies) {
+    const candCt = this._enemyCandidatesNearWorld(p.x, p.y, CONFIG.PLAYER_RADIUS + 110);
+    for (let ci = 0; ci < candCt.length; ci++) {
+      const e = candCt[ci];
       const def = ENEMY_TYPES[e.typeId];
       if (dist(p.x, p.y, e.x, e.y) < CONFIG.PLAYER_RADIUS + def.radius) {
         contactDps += def.touchDps;
@@ -2815,7 +3018,7 @@ export class Game {
           const a = randRange(-Math.PI * 0.85, -Math.PI * 0.15); // mostly upward
           const sp = randRange(60, 160);
           const outward = randRange(18, 52);
-          this.particles.push({
+          this._particlePush({
             x: hx + Math.cos(a) * outward * 0.08,
             y: hy + Math.sin(a) * outward * 0.08,
             vx: Math.cos(a) * sp,
@@ -2838,7 +3041,7 @@ export class Game {
     p.attackCd = (p.attackCd ?? 0) - dt;
     if ((p.attackCd ?? 0) <= 0) {
       if (p.characterId === "berserker") {
-        // Single red slash only. Auto-aim hit direction toward nearest enemy in range so kiting still hits.
+        // Red slash(es). Auto-aim toward nearest enemy in range so kiting still hits.
         // Sprite facing remains movement-driven elsewhere (A/D); only the slash hitbox direction is aimed.
         const aim = this.nearestEnemyForBerserkerSlash(p);
         if (!aim) {
@@ -2847,7 +3050,13 @@ export class Game {
           return;
         }
         const baseAng = Math.atan2(aim.y - p.y, aim.x - p.x);
-        this.spawnSlash(baseAng, p);
+        const st = p.stats ?? this.stats;
+        const nSlash = Math.max(1, Math.min(3, Math.floor(st.multiSlash ?? 1)));
+        const spread = CONFIG.BERSERKER_MULTI_SLASH_SPREAD ?? 0.22;
+        for (let si = 0; si < nSlash; si++) {
+          const off = nSlash <= 1 ? 0 : spread * (si - (nSlash - 1) * 0.5);
+          this.spawnSlash(baseAng + off, p);
+        }
         p.attackCd = this.getSlashCooldown(p);
       } else if (p.characterId === "revenant") {
         // Respect Soul Rip range (not global attack range).
@@ -2958,10 +3167,14 @@ export class Game {
         }
         if (!best) {
           let bestD2 = homingRange * homingRange;
-          for (const e of this.enemies) {
+          const px = p.x ?? 0;
+          const py = p.y ?? 0;
+          const candHm = this._enemyCandidatesNearWorld(px, py, homingRange + 40);
+          for (let hi = 0; hi < candHm.length; hi++) {
+            const e = candHm[hi];
             if (!e || (e.hp ?? 0) <= 0) continue;
-            const dx = e.x - (p.x ?? 0);
-            const dy = e.y - (p.y ?? 0);
+            const dx = e.x - px;
+            const dy = e.y - py;
             const d2 = dx * dx + dy * dy;
             if (d2 < bestD2) {
               bestD2 = d2;
@@ -3012,7 +3225,15 @@ export class Game {
         const dy = cy - hy;
         return dx * dx + dy * dy <= rr * rr;
       };
-      for (const e of this.enemies) {
+      const segHalfSr =
+        Math.hypot(x1 - x0, y1 - y0) * 0.5 + (p.r ?? 0) + 100;
+      const candCol = this._enemyCandidatesNearWorld(
+        (x0 + x1) * 0.5,
+        (y0 + y1) * 0.5,
+        segHalfSr
+      );
+      for (let ci = 0; ci < candCol.length; ci++) {
+        const e = candCol[ci];
         const def = ENEMY_TYPES[e.typeId];
         const rr = (p.r ?? 0) + def.radius;
         if (segHitsCircle(x0, y0, x1, y1, e.x, e.y, rr)) {
@@ -3304,7 +3525,7 @@ export class Game {
             for (let n = 0; n < 14; n++) {
               const a = Math.random() * Math.PI * 2;
               const s = randRange(80, 210);
-              this.particles.push({
+              this._particlePush({
                 x: e.x,
                 y: e.y,
                 vx: Math.cos(a) * s,
@@ -3600,8 +3821,10 @@ export class Game {
         this.projectiles.splice(i, 1);
         continue;
       }
-      for (const e of this.enemies) {
-        const hc = enemyHitCircle(e);
+      const candP = this._enemyCandidatesNearWorld(p.x, p.y, (p.r ?? 6) + 130);
+      for (let ej = 0; ej < candP.length; ej++) {
+        const e = candP[ej];
+        const hc = enemyHitCircleInto(e, _enemyHCScr);
         const hitSet = p.hit instanceof Set ? p.hit : null;
         if (hitSet && hitSet.has(e)) continue;
         if (dist(p.x, p.y, hc.x, hc.y) < p.r + hc.r) {
@@ -3751,20 +3974,54 @@ export class Game {
     );
   }
 
+  /** Desktop: pushes `o` verbatim. Touch: reuse pooled objects to cut GC spikes during combat VFX. */
+  _particlePush(o) {
+    if (!this._mobilePerf) {
+      this.particles.push(o);
+      return;
+    }
+    let p = this._particlePool.pop();
+    if (!p) p = {};
+    p.x = o.x;
+    p.y = o.y;
+    p.vx = o.vx;
+    p.vy = o.vy;
+    p.life = o.life;
+    p.maxLife = o.maxLife;
+    p.color = o.color;
+    p.size = o.size;
+    this.particles.push(p);
+  }
+
   spawnHitParticles(x, y) {
+    const col = "rgba(200, 160, 255, 0.9)";
     for (let n = 0; n < 6; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(40, 120);
-      this.particles.push({
-        x,
-        y,
-        vx: Math.cos(a) * s,
-        vy: Math.sin(a) * s,
-        life: randRange(0.15, 0.35),
-        maxLife: 0.35,
-        color: "rgba(200, 160, 255, 0.9)",
-        size: randRange(2, 4),
-      });
+      if (!this._mobilePerf) {
+        this._particlePush({
+          x,
+          y,
+          vx: Math.cos(a) * s,
+          vy: Math.sin(a) * s,
+          life: randRange(0.15, 0.35),
+          maxLife: 0.35,
+          color: col,
+          size: randRange(2, 4),
+        });
+        continue;
+      }
+      /** Touch: reuse one scratch object → `_particlePush` copies fields (no 6 literals/GC/frame). */
+      const sc = this._hitParticleScratch || (this._hitParticleScratch = {});
+      sc.x = x;
+      sc.y = y;
+      sc.vx = Math.cos(a) * s;
+      sc.vy = Math.sin(a) * s;
+      sc.life = randRange(0.15, 0.35);
+      sc.maxLife = 0.35;
+      sc.color = col;
+      sc.size = randRange(2, 4);
+      this._particlePush(sc);
     }
   }
 
@@ -3772,7 +4029,7 @@ export class Game {
     for (let n = 0; n < 12; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(60, 180);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -3789,7 +4046,7 @@ export class Game {
     for (let n = 0; n < 18; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(70, 200);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -3803,7 +4060,7 @@ export class Game {
     for (let n = 0; n < 8; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(40, 110);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -3821,7 +4078,7 @@ export class Game {
     for (let n = 0; n < 22; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(90, 260);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -3835,7 +4092,7 @@ export class Game {
     const steps = 14;
     for (let i = 0; i < steps; i++) {
       const a = (i / steps) * Math.PI * 2;
-      this.particles.push({
+      this._particlePush({
         x: x + Math.cos(a) * radius * 0.35,
         y: y + Math.sin(a) * radius * 0.35,
         vx: Math.cos(a) * randRange(40, 120),
@@ -3868,8 +4125,10 @@ export class Game {
     }
 
     const killed = [];
-    for (const e of this.enemies) {
-      const hc = enemyHitCircle(e);
+    const candEx = this._enemyCandidatesNearWorld(x, y, R + 140);
+    for (let xi = 0; xi < candEx.length; xi++) {
+      const e = candEx[xi];
+      const hc = enemyHitCircleInto(e, _enemyHCScr);
       const d = ENEMY_TYPES[e.typeId];
       if (dist(hc.x, hc.y, x, y) >= R + hc.r) continue;
       e.hitFlash = CONFIG.HIT_FLASH_DURATION;
@@ -3923,7 +4182,7 @@ export class Game {
     for (let n = 0; n < 8; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(30, 90);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -3961,7 +4220,11 @@ export class Game {
       aliveIndices.length > 0 ? aliveIndices[(Math.max(0, this.level - 2) % aliveIndices.length)] : 0;
     this.upgradePlayerIndex = pickIdx;
     const ps = this.players?.[pickIdx]?.stats ?? this.stats;
-    this.pendingUpgrades = pickThreeUpgrades(ps, Math.random, { level: this.level });
+    const recent = this.recentUpgradeIdsBySeat?.[pickIdx] ?? [];
+    this.pendingUpgrades = pickThreeUpgrades(ps, Math.random, {
+      level: this.level,
+      recentUpgradeIds: recent,
+    });
     this.shake = Math.min(
       CONFIG.SCREEN_SHAKE_LEVEL_MAX ?? 3.5,
       this.shake + (CONFIG.SCREEN_SHAKE_ON_LEVEL ?? 1.5)
@@ -3975,6 +4238,12 @@ export class Game {
     const st = p?.stats ?? this.stats;
     upgrade.apply(st);
     sanitizePlayerStats(st);
+    const hid = upgrade?.id;
+    if (typeof hid === "string" && hid) {
+      const h = this.recentUpgradeIdsBySeat[idx] ?? (this.recentUpgradeIdsBySeat[idx] = []);
+      h.push(hid);
+      while (h.length > 6) h.shift();
+    }
     // Small heal goes only to the upgraded player (keeps MVP simple + matches per-player upgrades).
     if (p && (p.hp ?? 0) > 0) {
       p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.05);
@@ -3983,7 +4252,11 @@ export class Game {
     if (this.levelUpsPending > 0) {
       this.playLevelUpSfx();
       const ps = this.players?.[idx]?.stats ?? this.stats;
-      this.pendingUpgrades = pickThreeUpgrades(ps, Math.random, { level: this.level });
+      const recent2 = this.recentUpgradeIdsBySeat?.[idx] ?? [];
+      this.pendingUpgrades = pickThreeUpgrades(ps, Math.random, {
+        level: this.level,
+        recentUpgradeIds: recent2,
+      });
     } else {
       this.mode = "playing";
       this.pendingUpgrades = [];
@@ -4501,7 +4774,7 @@ export class Game {
         const a = randRange(-Math.PI * 0.85, -Math.PI * 0.15);
         const sp = randRange(60, 160);
         const outward = randRange(18, 52);
-        this.particles.push({
+        this._particlePush({
           x: hx + Math.cos(a) * outward * 0.08,
           y: hy + Math.sin(a) * outward * 0.08,
           vx: Math.cos(a) * sp,
@@ -4516,15 +4789,32 @@ export class Game {
   }
 
   updateParticles(dt) {
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
+    const arr = this.particles;
+    if (!this._mobilePerf) {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const p = arr[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vx *= 0.92;
+        p.vy *= 0.92;
+        p.life -= dt;
+        if (p.life <= 0) arr.splice(i, 1);
+      }
+      return;
+    }
+    const pool = this._particlePool;
+    let w = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const p = arr[i];
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.vx *= 0.92;
       p.vy *= 0.92;
       p.life -= dt;
-      if (p.life <= 0) this.particles.splice(i, 1);
+      if (p.life <= 0) pool.push(p);
+      else arr[w++] = p;
     }
+    arr.length = w;
   }
 
   updatePickups(dt) {
@@ -4567,7 +4857,9 @@ export class Game {
           const R = CONFIG.PICKUP_BOMB_RADIUS ?? 420;
           const dmg = this.getEffectiveDamage() * (CONFIG.PICKUP_BOMB_DAMAGE_MULT ?? 2.5);
           const killed = [];
-          for (const e of this.enemies) {
+          const candBb = this._enemyCandidatesNearWorld(px, py, R + 150);
+          for (let bi = 0; bi < candBb.length; bi++) {
+            const e = candBb[bi];
             const def = ENEMY_TYPES[e.typeId];
             if (dist(e.x, e.y, px, py) >= R + def.radius) continue;
             e.hitFlash = CONFIG.HIT_FLASH_DURATION;
@@ -4709,7 +5001,9 @@ export class Game {
     let ay = 0;
     let bestD = Infinity;
     if (Array.isArray(this.enemies) && this.enemies.length > 0) {
-      for (const e of this.enemies) {
+      const candBm = this._enemyCandidatesNearWorld(px, py, aimR + 60);
+      for (let bmi = 0; bmi < candBm.length; bmi++) {
+        const e = candBm[bmi];
         const d = dist(px, py, e.x, e.y);
         if (d > aimR) continue;
         if (d < bestD) {
@@ -4785,7 +5079,7 @@ export class Game {
     for (let n = 0; n < 4; n++) {
       const a = Math.random() * Math.PI * 2;
       const s = randRange(60, 140);
-      this.particles.push({
+      this._particlePush({
         x,
         y,
         vx: Math.cos(a) * s,
@@ -4847,7 +5141,11 @@ export class Game {
         const dy = cy - hy;
         return dx * dx + dy * dy <= rr * rr;
       };
-      for (const e of this.enemies) {
+      const segHalf =
+        Math.hypot(x1 - x0, y1 - y0) * 0.5 + (d.r ?? 4) + 95;
+      const candDg = this._enemyCandidatesNearWorld((x0 + x1) * 0.5, (y0 + y1) * 0.5, segHalf);
+      for (let dj = 0; dj < candDg.length; dj++) {
+        const e = candDg[dj];
         const def = ENEMY_TYPES[e.typeId];
         const hitSet = d.hit instanceof Set ? d.hit : null;
         if (hitSet && hitSet.has(e)) continue;
@@ -4915,8 +5213,10 @@ export class Game {
         continue;
       }
 
-      for (const e of this.enemies) {
-        const hc = enemyHitCircle(e);
+      const candAx = this._enemyCandidatesNearWorld(a.x, a.y, (a.r ?? 10) + 130);
+      for (let axi = 0; axi < candAx.length; axi++) {
+        const e = candAx[axi];
+        const hc = enemyHitCircleInto(e, _enemyHCScr);
         const hitMap = a.hit instanceof Map ? a.hit : (a.hit = new Map());
         const last = hitMap.get(e) ?? -Infinity;
         if (this.time - last < hitCd) continue;
@@ -4999,8 +5299,10 @@ export class Game {
         continue;
       }
 
-      for (const e of this.enemies) {
-        const hc = enemyHitCircle(e);
+      const candBr = this._enemyCandidatesNearWorld(b.x, b.y, (b.r ?? 10) + 130);
+      for (let bri = 0; bri < candBr.length; bri++) {
+        const e = candBr[bri];
+        const hc = enemyHitCircleInto(e, _enemyHCScr);
         const hitMap = b.hit instanceof Map ? b.hit : (b.hit = new Map());
         const last = hitMap.get(e) ?? -Infinity;
         if (this.time - last < hitCd) continue;
@@ -5093,8 +5395,10 @@ export class Game {
 
     // Apply damage instantly.
     const killed = [];
-    for (const e of this.enemies) {
-      const hc = enemyHitCircle(e);
+    const candLt = this._enemyCandidatesNearWorld(x, y, radiusWorld + 140);
+    for (let li = 0; li < candLt.length; li++) {
+      const e = candLt[li];
+      const hc = enemyHitCircleInto(e, _enemyHCScr);
       if (dist(x, y, hc.x, hc.y) < radiusWorld + hc.r) {
         e.hitFlash = CONFIG.HIT_FLASH_DURATION;
         if (this.applyEnemyDamage(e, damage)) killed.push(e);
@@ -5141,23 +5445,49 @@ export class Game {
   }
 
   addFloatText(x, y, text, color) {
-    this.floatTexts.push({
-      x,
-      y,
-      text,
-      color,
-      life: CONFIG.DAMAGE_NUMBER_DURATION,
-      vy: -42,
-    });
+    if (!this._mobilePerf) {
+      this.floatTexts.push({
+        x,
+        y,
+        text,
+        color,
+        life: CONFIG.DAMAGE_NUMBER_DURATION,
+        vy: -42,
+      });
+      return;
+    }
+    const f = this._floatTextPool.pop() || {};
+    f.x = x;
+    f.y = y;
+    f.text = text;
+    f.color = color;
+    f.life = CONFIG.DAMAGE_NUMBER_DURATION;
+    f.vy = -42;
+    this.floatTexts.push(f);
   }
 
   updateFloatTexts(dt) {
-    for (const f of this.floatTexts) {
+    if (!this._mobilePerf) {
+      for (const f of this.floatTexts) {
+        f.y += f.vy * dt;
+        f.vy *= 0.95;
+        f.life -= dt;
+      }
+      this.floatTexts = this.floatTexts.filter((f) => f.life > 0);
+      return;
+    }
+    const pool = this._floatTextPool;
+    const arr = this.floatTexts;
+    let w = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const f = arr[i];
       f.y += f.vy * dt;
       f.vy *= 0.95;
       f.life -= dt;
+      if (f.life > 0) arr[w++] = f;
+      else pool.push(f);
     }
-    this.floatTexts = this.floatTexts.filter((f) => f.life > 0);
+    arr.length = w;
   }
 
   worldToScreen(wx, wy) {
@@ -5171,10 +5501,53 @@ export class Game {
   /**
    * Match bitmap resolution to on-screen size × DPR, then scale the 2D context so all drawing stays in
    * CONFIG.CANVAS_W×H logical pixels (crisp nearest-neighbor scaling for sprites).
+   *
+   * Desktop: unchanged behavior — full layout read each frame (cheap on PC browsers).
+   * Touch profile: skips `getBoundingClientRect`/backing-store work between resizes (`ResizeObserver`).
    */
   syncCanvasResolution() {
     const canvas = this.canvas;
     const ctx = this.ctx;
+
+    const finish = (bw, bh) => {
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
+      }
+      ctx.setTransform(bw / CONFIG.CANVAS_W, 0, 0, bh / CONFIG.CANVAS_H, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      if ("imageSmoothingQuality" in ctx) {
+        ctx.imageSmoothingQuality = "low";
+      }
+    };
+
+    if (this._mobilePerf) {
+      if (!this._mobileCanvasObsSetup) {
+        this._mobileCanvasObsSetup = true;
+        try {
+          this._mobileCanvasRO = new ResizeObserver(() => {
+            this._canvasLayoutDirty = true;
+          });
+          this._mobileCanvasRO.observe(canvas);
+        } catch {
+          //
+        }
+        this._canvasLayoutDirty = true;
+      }
+
+      if (
+        !this._canvasLayoutDirty &&
+        this._cachedBw > 0 &&
+        this._cachedBh > 0 &&
+        canvas.width === this._cachedBw &&
+        canvas.height === this._cachedBh
+      ) {
+        finish(this._cachedBw, this._cachedBh);
+        return;
+      }
+      this._canvasLayoutDirty = false;
+    }
+
     const rect = canvas.getBoundingClientRect();
     const raw = window.devicePixelRatio || 1;
     let cap = CONFIG.CANVAS_MAX_DPR ?? 2;
@@ -5193,14 +5566,10 @@ export class Game {
     const rh = Math.max(rect.height || CONFIG.CANVAS_H, 2);
     const bw = Math.max(1, Math.floor(rw * dpr));
     const bh = Math.max(1, Math.floor(rh * dpr));
-    if (canvas.width !== bw || canvas.height !== bh) {
-      canvas.width = bw;
-      canvas.height = bh;
-    }
-    ctx.setTransform(bw / CONFIG.CANVAS_W, 0, 0, bh / CONFIG.CANVAS_H, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    if ("imageSmoothingQuality" in ctx) {
-      ctx.imageSmoothingQuality = "low";
+    finish(bw, bh);
+    if (this._mobilePerf) {
+      this._cachedBw = bw;
+      this._cachedBh = bh;
     }
   }
 
@@ -5674,9 +6043,7 @@ export class Game {
         const st = pl.stats ?? this.stats;
         const hs = pl.hammers ?? [];
         if (hs.length <= 0) continue;
-        const radius =
-          (CONFIG.HAMMER_ORBIT_RADIUS * (st.hammerOrbitRadius ?? 1)) +
-          (this.characterId === "mage" ? (CONFIG.HAMMER_ORBIT_RADIUS_MAGE_BONUS ?? 0) : 0);
+        const radius = this.hammerOrbitWorldRadius(pl);
         const sizePx = CONFIG.HAMMER_DRAW_SIZE * (st.hammerSize ?? 1);
         hs.forEach((h, i) => {
           const a = (pl.hammerOrbitPhase ?? 0) + (i / hs.length) * Math.PI * 2;
@@ -5689,27 +6056,28 @@ export class Game {
     }
 
     // Mage-exclusive outer ring: Arcane Runes (per-player).
-    if (this.characterId === "mage") {
+    if ((this.players ?? []).some((p) => (p?.characterId ?? p?.stats?.characterId) === "mage")) {
       const z = CONFIG.VIEW_WORLD_SCALE ?? 1;
       for (const pl of this.players ?? []) {
         if (!pl || (pl.hp ?? 0) <= 0) continue;
+        if ((pl.characterId ?? pl.stats?.characterId) !== "mage") continue;
         const st = pl.stats ?? this.stats;
         const rs = pl.arcaneRunes ?? [];
         if (rs.length <= 0) continue;
-        const hammerR =
-          (pl.hammers?.length ?? 0) > 0
-            ? (CONFIG.HAMMER_ORBIT_RADIUS ?? 80) * (st.hammerOrbitRadius ?? 1)
-            : 0;
+        const hammerR = this.hammerOrbitWorldRadius(pl);
         const baseR =
           (CONFIG.ARCANE_RUNES_ORBIT_RADIUS ?? 108) * (st.arcaneRunesOrbitRadiusMult ?? 1);
-        const radius = Math.max(baseR, hammerR + 26);
+        const pad = CONFIG.ARCANE_RUNES_CLEARANCE_BEYOND_HAMMER_ORBIT ?? 42;
+        const radius = Math.max(baseR, hammerR + pad);
         const sizePx = (CONFIG.ARCANE_RUNES_DRAW_SIZE ?? 64) / z;
+        const spinPh = pl.arcaneRuneOrbitPhase ?? 0;
         rs.forEach((r, i) => {
-          const a = (pl.arcaneRuneOrbitPhase ?? 0) + (i / rs.length) * Math.PI * 2;
+          const a = spinPh + (i / rs.length) * Math.PI * 2;
           const wx = pl.x + Math.cos(a) * radius;
           const wy = pl.y + Math.sin(a) * radius;
           const s = this.worldToScreen(wx, wy);
-          const spin = (r?.spin ?? 0) + this.time * 1.6 + a * 0.35;
+          // Lock glyph spin to shared orbit phase so spacing stays visually even (avoid per-angle wobble).
+          const spin = (r?.spin ?? 0) + spinPh * 1.1;
           drawRuneSprite(ctx, s.x, s.y, spin, sizePx, 0.98);
         });
       }

@@ -8,6 +8,8 @@ export const CONFIG = {
   CANVAS_MAX_DPR: 4,
   WORLD_W: 2400,
   WORLD_H: 2400,
+  /** Survivor milestone: congratulations overlay when `game.time` first reaches this many seconds. */
+  SURVIVAL_MILESTONE_10_MIN_SECONDS: 600,
   /** Procedural fallback grid (no PNG ground). */
   GROUND_TILE_SIZE: 48,
   /**
@@ -492,6 +494,13 @@ export const CONFIG = {
    * Compensates shared team level + tougher enemies without splitting orb drops per player.
    */
   COOP_XP_INCOME_PER_EXTRA_PLAYER: 0.1,
+  /**
+   * Coarse-pointer host sim only: rebuild a spatial bucket map each frame once enemy count rises,
+   * so weapon collision skips distant enemies (keeps projectile work near-linear in local density).
+   */
+  MOBILE_ENEMY_SPATIAL_MIN: 22,
+  /** World-unit grid size for spatial bins (pixels in world space). */
+  MOBILE_ENEMY_CELL_WORLD: 200,
   /** Seconds; HP multiplier is 1 + min(time / this, ENEMY_HP_SCALE_MAX_BONUS). */
   ENEMY_HP_SCALE_TIME_CAP: 120,
   ENEMY_HP_SCALE_MAX_BONUS: 0.5,
@@ -803,6 +812,8 @@ export const CONFIG = {
   ARCANE_RUNES_ORBIT_SPEED: 3.1,
   /** Damage per tick (scaled by stats.damageMult + rune damage mult). */
   ARCANE_RUNES_BASE_DAMAGE: 16,
+  /** Extra world px beyond the hammer orbit ring so runes stay visually outside axe hammers. */
+  ARCANE_RUNES_CLEARANCE_BEYOND_HAMMER_ORBIT: 42,
   /** Seconds before the same enemy can be hit again by a rune. */
   ARCANE_RUNES_HIT_COOLDOWN: 0.2,
   /** Rune overlap radius in world px. */
@@ -891,7 +902,7 @@ export const ENEMY_TYPES = {
     id: "golem",
     /** Footprint for wide lane blocking; scaled with large on-screen sprite. */
     radius: 34,
-    maxHp: 340,
+    maxHp: 240,
     speed: 40,
     touchDps: 20,
     color: "#5a4f72",
