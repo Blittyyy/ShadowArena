@@ -615,6 +615,21 @@ html.is-touch-game-chrome #overlay-menu .menu-shell {
   text-shadow: 0 1px 0 rgba(0,0,0,0.65);
 }
 
+.menu-jam-note {
+  margin: 14px auto 0;
+  max-width: min(340px, 88vw);
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: center;
+  color: rgba(190, 178, 215, 0.62);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+}
+
+.menu-jam-note strong {
+  font-weight: 600;
+  color: rgba(210, 198, 235, 0.72);
+}
+
 /* Bone pointers are now rendered via `assets/Bone.glb` on `.menu-bones-canvas`. */
 
 .menu-item:has(.menu-btn:focus-visible)::before,
@@ -2219,6 +2234,24 @@ html.is-touch-game-chrome #overlay-character-select .character-mp-controls {
   line-height: 1.55;
   color: rgba(200, 188, 228, 0.82);
   font-weight: 400;
+}
+
+.online-gate-host-tip {
+  margin: 12px auto 0;
+  max-width: 24em;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  color: rgba(210, 198, 235, 0.88);
+  border-radius: 8px;
+  border: 1px solid rgba(155, 109, 255, 0.28);
+  background: rgba(30, 22, 48, 0.45);
+}
+
+.online-gate-host-tip strong {
+  color: rgba(235, 220, 255, 0.95);
+  font-weight: 650;
 }
 
 .online-gate-form {
