@@ -615,17 +615,23 @@ html.is-touch-game-chrome #overlay-menu .menu-shell {
   text-shadow: 0 1px 0 rgba(0,0,0,0.65);
 }
 
-.menu-jam-note {
-  margin: 14px auto 0;
-  max-width: min(340px, 88vw);
+#overlay-menu .menu-jam-note {
+  position: absolute;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px) + 6px);
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: min(340px, calc(100vw - 40px));
   font-size: 9px;
   line-height: 1.35;
   text-align: center;
   color: rgba(190, 178, 215, 0.62);
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  z-index: 2;
 }
 
-.menu-jam-note strong {
+#overlay-menu .menu-jam-note strong {
   font-weight: 600;
   color: rgba(210, 198, 235, 0.72);
 }
